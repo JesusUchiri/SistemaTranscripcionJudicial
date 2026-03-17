@@ -85,6 +85,7 @@ export interface Segmento {
     texto_ia: string
     texto_editado: string | null
     texto_mejorado?: string | null  // Texto mejorado por Claude en tiempo real
+    texto_batch?: string | null     // Texto sugerido de procesamiento batch
     timestamp_inicio: number
     timestamp_fin: number
     confianza: number
@@ -154,3 +155,22 @@ export const SPEAKER_ROLES: SpeakerRole[] = [
     { id: 14, rol: 'Partes en general', etiqueta: 'PARTES PROCESALES:', color: '#78716C' },
     { id: 15, rol: 'Otro', etiqueta: 'OTRO:', color: '#6B7280' },
 ]
+
+// ── Acta ──────────────────────────────────────────────
+export interface Acta {
+    id: string
+    audiencia_id: string
+    version: number
+    formato: string
+    estado: 'borrador' | 'en_revision' | 'aprobada' | 'exportada'
+    contenido_llm: string | null
+    contenido_editado: string | null
+    modelo_llm: string | null
+    tokens_used: number | null
+    confianza: number | null
+    generado_por: string
+    aprobada_por?: string | null
+    aprobada_at?: string | null
+    created_at: string
+    updated_at: string
+}

@@ -1,5 +1,6 @@
 /**
  * URLs base del API y WebSocket.
+ * En local: se leen de .env.local (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL); reiniciar dev si cambian.
  *
  * DOKPLOY / acceso desde otras PCs:
  * - En el servicio FRONTEND define en Build y Runtime:

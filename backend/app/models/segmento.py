@@ -36,6 +36,7 @@ class Segmento(Base):
     texto_ia: Mapped[str] = mapped_column(Text, nullable=False)
     texto_editado: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     texto_mejorado: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Texto mejorado por Claude en tiempo real
+    texto_batch: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Propuesta generada por procesamiento Batch
     timestamp_inicio: Mapped[float] = mapped_column(Float, nullable=False)
     timestamp_fin: Mapped[float] = mapped_column(Float, nullable=False)
     confianza: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)

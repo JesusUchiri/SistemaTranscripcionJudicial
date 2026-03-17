@@ -1,0 +1,51 @@
+========================================
+Ejecutar todo en local (sin Dokploy ni túnel)
+========================================
+
+OPCIÓN A — Con Docker (recomendado)
+  cd backend
+  docker compose -f docker-compose.local.yml up -d
+  (El .env ya está configurado para judiscribe/judiscribe_secret/judiscribe y redis sin contraseña.)
+
+OPCIÓN B — Sin Docker: instalar PostgreSQL y Redis en Windows
+  - PostgreSQL: https://www.postgresql.org/download/windows/
+    Crear usuario judiscribe, contraseña judiscribe_secret, base de datos judiscribe.
+  - Redis: https://github.com/microsoftarchive/redis/releases (o Chocolatey: choco install redis-64)
+  - El .env ya usa localhost:5432 y localhost:6379.
+
+-------------------------------------------------------------
+PASO 1 — Levantar Postgres y Redis
+-------------------------------------------------------------
+  Con Docker:  docker compose -f docker-compose.local.yml up -d
+  Sin Docker:  Asegúrate de que el servicio PostgreSQL y Redis estén en ejecución.
+
+-------------------------------------------------------------
+PASO 2 — Crear tablas en la base de datos
+-------------------------------------------------------------
+  cd backend
+  alembic upgrade head
+
+-------------------------------------------------------------
+PASO 3 — Backend (terminal 1)
+-------------------------------------------------------------
+  cd backend
+  python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  El backend crea solo los usuarios de prueba si la BD está vacía:
+  - digitador@judiscribe.pe / Digitador2024!
+  - admin@judiscribe.pe / JudiScribe2024!
+
+-------------------------------------------------------------
+PASO 4 — Frontend (terminal 2)
+-------------------------------------------------------------
+  cd frontend
+  npm run dev
+
+-------------------------------------------------------------
+Listo
+-------------------------------------------------------------
+  Abre:  http://localhost:3000/login
+
+Para parar Postgres y Redis:
+  cd backend
+  docker compose -f docker-compose.local.yml down

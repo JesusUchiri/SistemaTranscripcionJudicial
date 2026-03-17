@@ -137,23 +137,26 @@ CONTEXTO PREVIO:
 FRASE A CORREGIR:
 "{sentence}"
 
-CORRIGE:
-1. Ortografía y tildes (que→qué en preguntas, si→sí afirmativo)
+REGLA PRINCIPAL (ABSOLUTA):
+⚠️ SOLO corregir palabras existentes. NUNCA añadir ni completar texto.
+
+CORRECCIONES PERMITIDAS (solo reemplazo 1:1):
+1. Ortografía y tildes (que→qué en preguntas, si→sí afirmativo, presuncion→presunción)
 2. Puntuación (¿?, ¡!, puntos, comas)
 3. Mayúsculas en cargos (Juez, Fiscal, Doctor, Señor, Señoría)
-4. Términos legales mal transcritos
-5. Frases incompletas que puedas completar del contexto
+4. Términos legales mal transcritos (reemplazo 1 palabra → 1 palabra)
 
-REGLAS:
-- NO inventes información
-- Mantén el significado original
-- Si es pregunta, usa ¿ y ?
-- Capitaliza nombres propios y cargos
+PROHIBIDO:
+- NO añadir palabras nuevas
+- NO completar frases incompletas
+- NO cambiar el número de palabras
+- NO inventar información
+- Mantener el significado original exacto
 
 Responde SOLO con JSON:
 {{
   "original": "frase original",
-  "corrected": "frase corregida",
+  "corrected": "frase corregida (misma cantidad de palabras)",
   "segment_type": "pregunta|afirmación|respuesta|declaración",
   "changes": [
     {{"from": "palabra_original", "to": "palabra_corregida", "reason": "razón"}}

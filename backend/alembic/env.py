@@ -15,6 +15,10 @@ from app.database import Base
 from app.models.usuario import Usuario
 from app.models.audiencia import Audiencia
 from app.models.segmento import Segmento
+from app.models.hablante import Hablante
+from app.models.marcador import Marcador
+from app.models.frase_estandar import FraseEstandar
+from app.models.acta import Acta
 
 config = context.config
 

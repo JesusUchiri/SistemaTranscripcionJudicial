@@ -215,20 +215,25 @@ CONTEXTO PREVIO:
 HABLANTE: {speaker_id}
 TEXTO CRUDO: {text}
 
-REGLAS DE FORMATO (OBLIGATORIAS):
-1. MAYÚSCULAS: Primera letra de cada oración SIEMPRE en mayúscula
-2. PUNTUACIÓN: Punto al final de oraciones completas. Coma donde corresponda pausas naturales
-3. PREGUNTAS: Usar "¿" al inicio y "?" al final de TODA pregunta
-4. CARGOS Y TÍTULOS: Siempre mayúscula - Juez, Fiscal, Doctor, Abogado, Señor, Señora, Señoría
-5. ORACIONES COMPLETAS: Si falta verbo o complemento obvio del contexto, completar
-6. RESPUESTAS CORTAS: "Sí.", "No.", "Correcto.", "Niego." - breves pero con punto final
+REGLA PRINCIPAL (ABSOLUTA — NUNCA VIOLAR):
+⚠️ NUNCA añadir palabras ni completar frases. Solo se permiten tres tipos de corrección:
+1. PUNTUACIÓN: Punto, coma, signos de pregunta (¿?), signos de exclamación (¡!)
+2. MAYÚSCULAS: Primera letra de oración, cargos (Juez, Fiscal, Doctor, Señor, Señora, Señoría), nombres propios
+3. REEMPLAZO 1:1: Si una palabra está mal transcrita, reemplazarla por la forma correcta (1 palabra → 1 palabra). Ejemplo: "presuncion" → "presunción", "acusdo" → "acusado"
 
-REGLAS DE CONTENIDO (OBLIGATORIAS):
-- NO inventar información que no esté en el audio
-- NO cambiar el significado
-- NO agregar explicaciones ni comentarios
+PROHIBICIONES (OBLIGATORIAS):
+- NO agregar palabras que no estén en el texto original
+- NO completar oraciones incompletas (dejar como están)
+- NO inventar información ni añadir contexto
 - NO usar puntos suspensivos (...)
-- SI hay duda, mantener el texto original mejorado solo en formato
+- NO agregar explicaciones ni comentarios
+- NO cambiar el número de palabras del texto original
+- SI hay duda, mantener la palabra original
+
+REGLAS ADICIONALES:
+- RESPUESTAS CORTAS: "Sí.", "No.", "Correcto.", "Niego." — mantener breves con punto final
+- Si es pregunta, usar ¿ y ?
+- Capitalizar nombres propios y cargos judiciales
 
 DEVUELVE SOLO EL TEXTO MEJORADO:"""
 

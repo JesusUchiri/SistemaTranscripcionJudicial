@@ -4,9 +4,13 @@ Configura CORS, routers REST, WebSocket, y eventos de startup/shutdown.
 """
 import logging
 from contextlib import asynccontextmanager
+from typing import Callable, List, Optional
 
-from fastapi import FastAPI
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import select, func
 
 from app.api.router import router as api_router
@@ -115,13 +119,80 @@ app = FastAPI(
 )
 
 # ── CORS ─────────────────────────────────────────────────
+# Origen: primero middleware que inyecta CORS en TODAS las respuestas (también 500),
+# luego CORSMiddleware estándar.
+_cors_origins = settings.cors_origins_list
+
+
+class InjectCORSHeadersMiddleware:
+    """Añade Access-Control-Allow-Origin a toda respuesta HTTP para que el navegador no bloquee por CORS."""
+
+    def __init__(self, app: ASGIApp, allowed_origins: List[str]) -> None:
+        self.app = app
+        self.allowed_origins = [o.rstrip("/") for o in allowed_origins] if allowed_origins else []
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        origin = None
+        for key, value in scope.get("headers", []):
+            if key == b"origin":
+                origin = value.decode("utf-8").strip()
+                break
+        allow_origin = None
+        if origin and origin.rstrip("/") in self.allowed_origins:
+            allow_origin = origin
+        elif self.allowed_origins:
+            allow_origin = self.allowed_origins[0]
+
+        async def send_with_cors(message: Message) -> None:
+            if message["type"] == "http.response.start" and allow_origin:
+                headers = list(message.get("headers", []))
+                has_origin = any(h[0].lower() == b"access-control-allow-origin" for h in headers)
+                if not has_origin:
+                    headers.append((b"access-control-allow-origin", allow_origin.encode()))
+                    headers.append((b"access-control-allow-credentials", b"true"))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_cors)
+
+
+# Primero CORSMiddleware (más interno), luego nuestro inyector (más externo) para que
+# toda respuesta pase por él y lleve Access-Control-Allow-Origin aunque sea 500.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+app.add_middleware(InjectCORSHeadersMiddleware, allowed_origins=_cors_origins)
+
+
+def _cors_headers(origin: Optional[str]) -> dict:
+    """Cabeceras CORS para respuestas de error (el navegador las necesita siempre)."""
+    if origin and origin.rstrip("/") in [o.rstrip("/") for o in _cors_origins]:
+        return {"Access-Control-Allow-Origin": origin}
+    if _cors_origins:
+        return {"Access-Control-Allow-Origin": _cors_origins[0]}
+    return {}
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Asegura que las respuestas 500 incluyan cabeceras CORS para que el front no vea error CORS."""
+    logger.exception("Error no controlado: %s", exc)
+    origin = request.headers.get("origin")
+    headers = _cors_headers(origin)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Error interno del servidor"},
+        headers=headers,
+    )
+
 
 # ── REST routes ──────────────────────────────────────────
 app.include_router(api_router)

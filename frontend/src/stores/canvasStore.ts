@@ -58,6 +58,7 @@ interface CanvasState {
     addBookmark: (bookmark: Omit<Bookmark, 'id' | 'createdAt'>) => void
     removeBookmark: (id: string) => void
 
+    setSegments: (segments: Segmento[]) => void
     reset: () => void
 }
 
@@ -234,6 +235,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         set((state) => ({
             bookmarks: state.bookmarks.filter((b) => b.id !== id),
         })),
+
+    setSegments: (segments) => set({ 
+        segments,
+        segmentCount: segments.length,
+        wordCount: segments.reduce((acc, s) => acc + (s.texto_editado || s.texto_mejorado || s.texto_ia).split(/\s+/).length, 0)
+    }),
 
     reset: () =>
         set({

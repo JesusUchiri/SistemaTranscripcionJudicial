@@ -50,6 +50,31 @@ const GRAMMAR_WORDS = new Set([
     'señor', 'señora', 'doctor', 'doctora', 'juez', 'fiscal',
 ])
 
+/* ── Sprint 6: Términos legales conocidos excluidos de sugerencias ── */
+const KNOWN_LEGAL_TERMS = new Set([
+    // Términos procesales
+    'audiencia', 'expediente', 'juzgado', 'sala', 'tribunal', 'ministerio',
+    'público', 'acusado', 'imputado', 'agraviado', 'testigo', 'perito',
+    'defensa', 'técnica', 'abogado', 'letrado', 'procurador', 'demandante',
+    'demandado', 'querellante', 'querellado', 'recurrente', 'apelante',
+    // Acciones procesales
+    'declara', 'manifiesta', 'indica', 'señala', 'solicita', 'requiere',
+    'resuelve', 'dispone', 'ordena', 'notifíquese', 'cúmplase', 'archívese',
+    'consentida', 'impugnada', 'apelada', 'revocada', 'confirmada',
+    // Delitos y términos penales
+    'delito', 'pena', 'sanción', 'prisión', 'reparación', 'civil',
+    'presunción', 'inocencia', 'culpabilidad', 'tipicidad', 'antijuridicidad',
+    // Documentos
+    'resolución', 'sentencia', 'auto', 'decreto', 'dictamen', 'requerimiento',
+    'acusación', 'denuncia', 'querella', 'demanda', 'contestación',
+    // Instituciones
+    'cusco', 'corte', 'superior', 'justicia', 'constitucional',
+    // Términos jurídicos generales
+    'derecho', 'ley', 'código', 'artículo', 'inciso', 'numeral',
+    'jurisprudencia', 'doctrina', 'principio', 'garantía', 'debido',
+    'proceso', 'procedimiento', 'instancia', 'recurso', 'casación',
+])
+
 /* ── Types ──────────────────────────────────────────── */
 
 export interface TranscriptionCanvasHandle {
@@ -372,12 +397,15 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                     const conf = wordObj.confidence
                     const wordLower = wordText.toLowerCase().replace(/[.,;:!?]/g, '')
 
+                    // Sprint 6: Umbral subido a 0.85 para reducir falsos positivos
                     // Solo marcar como baja confianza si:
-                    // 1. Confianza < 0.7
+                    // 1. Confianza < 0.85
                     // 2. NO es una palabra gramatical común
                     // 3. Tiene más de 2 caracteres (evitar marcas en artículos cortos)
-                    const shouldMark = conf < 0.7 &&
+                    // 4. NO es un término legal conocido (excluir del diccionario)
+                    const shouldMark = conf < 0.85 &&
                         !GRAMMAR_WORDS.has(wordLower) &&
+                        !KNOWN_LEGAL_TERMS.has(wordLower) &&
                         wordLower.length > 2
 
                     if (shouldMark) {

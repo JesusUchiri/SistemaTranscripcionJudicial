@@ -1,0 +1,89 @@
+========================================
+Desarrollo local usando las bases de Dokploy
+========================================
+
+Tu servidor: root@72.60.114.137
+(Contraseña la introduces cuando SSH la pida.)
+
+-------------------------------------------------------------
+PASO 0 — Conectarte a las bases (elige UNA opción)
+-------------------------------------------------------------
+
+  OPCIÓN TÚNEL (recomendado, sin abrir puertos en el servidor):
+  - Abre PowerShell o CMD y pega esto (deja la ventana abierta):
+      ssh -L 5432:judiscribe-base-de-datos-y6sd64:5432 -L 6379:judiscribe-base-de-datos-qigub7:6379 root@72.60.114.137
+  - Cuando pida la contraseña, introdúcela.
+  - El .env ya usa localhost; con el túnel abierto el backend conecta.
+
+  OPCIÓN EXPONER PUERTOS (si prefieres no usar túnel):
+  - Conéctate al servidor:  ssh root@72.60.114.137  (pon la contraseña).
+  - Una vez dentro, ejecuta (según tu firewall; si usas ufw):
+      ufw allow 5432/tcp
+      ufw allow 6379/tcp
+      ufw reload
+  - En Dokploy, en Postgres y Redis, confirma que External Port = 5432 y 6379.
+  - En backend/.env pon la IP del servidor en lugar de localhost:
+      DATABASE_URL=postgresql+asyncpg://postgres:5eewwwv6avllprmd@72.60.114.137:5432/postgres
+      REDIS_URL=redis://default:pgavyzb9zn1xylr8@72.60.114.137:6379/0
+  - Cierra SSH. Desde tu PC el backend podrá conectar directo (menos seguro).
+
+-------------------------------------------------------------
+OPCIÓN A — Conexión directa (si los puertos están expuestos)
+-------------------------------------------------------------
+En General de cada base en Dokploy has dejado:
+  • Postgres: External Port (Internet) = 5432
+  • Redis:    External Port (Internet) = 6379
+
+Si tu servidor tiene IP o dominio público y el firewall permite 5432 y 6379,
+puedes usar ese host en .env SIN túnel SSH.
+
+En backend/.env pon (sustituye TU_IP_O_DOMINIO por la IP o dominio del servidor):
+
+  DATABASE_URL=postgresql+asyncpg://postgres:5eewwwv6avllprmd@TU_IP_O_DOMINIO:5432/postgres
+  REDIS_URL=redis://default:pgavyzb9zn1xylr8@TU_IP_O_DOMINIO:6379/0
+
+Ejemplo si el servidor es judiscribe.ecosdelseo.com:
+  DATABASE_URL=postgresql+asyncpg://postgres:5eewwwv6avllprmd@judiscribe.ecosdelseo.com:5432/postgres
+  REDIS_URL=redis://default:pgavyzb9zn1xylr8@judiscribe.ecosdelseo.com:6379/0
+
+Luego levanta el backend (paso "Levantar backend" más abajo). No hace falta túnel.
+
+-------------------------------------------------------------
+OPCIÓN B — Túnel SSH (si la opción A no funciona o no quieres exponer puertos)
+-------------------------------------------------------------
+Los hosts internos (judiscribe-base-de-datos-y6sd64, judiscribe-base-de-datos-qigub7)
+solo se resuelven dentro de Dokploy. Para usarlos desde tu PC, abre un túnel SSH.
+
+En una terminal (déjala abierta), sustituye USUARIO e IP_O_DOMINIO:
+
+  ssh -L 5432:judiscribe-base-de-datos-y6sd64:5432 -L 6379:judiscribe-base-de-datos-qigub7:6379 USUARIO@IP_O_DOMINIO
+
+En .env deja localhost:
+  DATABASE_URL=postgresql+asyncpg://postgres:5eewwwv6avllprmd@localhost:5432/postgres
+  REDIS_URL=redis://default:pgavyzb9zn1xylr8@localhost:6379/0
+
+-------------------------------------------------------------
+Levantar backend (UNA SOLA VEZ)
+-------------------------------------------------------------
+  cd backend
+  pip install -r requirements.txt
+  alembic upgrade head
+  python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  Importante: no ejecutes uvicorn en dos terminales. Solo una instancia del
+  backend. Si al arrancar ves "puerto en uso" o "acceso denegado", puede que
+  ya haya un backend en 8000; ciérralo o usa otro puerto (ej. 8001) y pon
+  en frontend/.env.local ese puerto en NEXT_PUBLIC_API_URL y NEXT_PUBLIC_WS_URL.
+
+-------------------------------------------------------------
+Levantar frontend (otra terminal)
+-------------------------------------------------------------
+  cd frontend
+  npm install
+  npm run dev
+
+  El frontend toma la URL del backend de frontend/.env.local (única fuente
+  en local). Debe coincidir con el puerto donde corre el backend:
+    NEXT_PUBLIC_API_URL=http://localhost:8000
+    NEXT_PUBLIC_WS_URL=ws://localhost:8000
+  Si cambias .env.local, reinicia "npm run dev" para que cargue las variables.

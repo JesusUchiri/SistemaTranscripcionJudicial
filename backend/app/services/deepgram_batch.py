@@ -180,8 +180,12 @@ class DeepgramBatchService:
         metadata = data.get("metadata", {})
         duration = metadata.get("duration", 0.0)
 
+        # Sprint 7: Recuperar todas las palabras con timestamps para alinear con segmentos de streaming
+        all_words = best.get("words", [])
+
         return {
             "segments": segments,
             "duration": duration,
             "speakers_count": len(all_speakers),
+            "words": all_words,
         }

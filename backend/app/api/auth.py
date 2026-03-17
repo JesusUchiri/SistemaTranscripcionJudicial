@@ -1,9 +1,10 @@
 """
 Endpoints de autenticación: login, register, refresh.
 """
+import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +34,17 @@ async def login(
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    user = await authenticate_user(db, request.email, request.password)
+    try:
+        user = await authenticate_user(db, request.email, request.password)
+    except Exception as e:
+        err_msg = str(e).lower()
+        if any(x in err_msg for x in ("connection", "connect", "refused", "timeout", "network", "unreachable")):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No se pudo conectar a la base de datos. Revisa backend/CONECTAR_DOKPLOY_LOCAL.txt (túnel SSH o que Postgres/Redis sean accesibles).",
+            )
+        raise
+
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -93,11 +104,18 @@ async def register(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
-    request_obj: dict,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Renovar access token usando refresh token."""
-    token = request_obj.get("refresh_token", "")
+    """Renovar access token usando refresh token (cookie httpOnly o body)."""
+    token = request.cookies.get("refresh_token") or ""
+    if not token:
+        body = await request.body()
+        if body:
+            try:
+                token = json.loads(body).get("refresh_token", "") or token
+            except (json.JSONDecodeError, TypeError):
+                pass
     token_data = decode_token(token)
     if token_data is None or token_data.user_id is None:
         raise HTTPException(

@@ -24,9 +24,10 @@ import ReproductorAudio, { type ReproductorAudioHandle } from '@/components/audi
 import BarraEstado from '@/components/status/BarraEstado'
 import PanelMarcadores from '@/components/markers/PanelMarcadores'
 import AtajosFrases from '@/components/shortcuts/AtajosFrases'
+import RevisionBatchPanel from '@/components/canvas/RevisionBatchPanel'
 import api from '@/lib/api'
 import { apiBaseUrl } from '@/lib/urls'
-import type { Audiencia } from '@/types'
+import type { Audiencia, Segmento } from '@/types'
 
 /* ── Types ──────────────────────────────────────────── */
 
@@ -80,8 +81,17 @@ export default function PaginaTranscripcion() {
     useEffect(() => {
         const cargar = async () => {
             try {
-                const { data } = await api.get<Audiencia>(`/api/audiencias/${audienciaId}`)
-                setAudiencia(data)
+                const [resAudiencia, resSegmentos] = await Promise.all([
+                    api.get<Audiencia>(`/api/audiencias/${audienciaId}`),
+                    api.get<Segmento[]>(`/api/audiencias/${audienciaId}/segmentos`)
+                ])
+                setAudiencia(resAudiencia.data)
+                useCanvasStore.getState().setSegments(resSegmentos.data)
+                
+                // Hide selector if we already have segments or the audio is transcribed/finished
+                if (resSegmentos.data.length > 0 || resAudiencia.data.estado === 'transcrita' || resAudiencia.data.estado === 'finalizada') {
+                    setMostrarSelector(false)
+                }
             } catch {
                 router.push('/')
             }
@@ -92,6 +102,46 @@ export default function PaginaTranscripcion() {
             if (temporizadorRef.current) clearInterval(temporizadorRef.current)
         }
     }, [audienciaId, router, reset])
+
+    /* ── Sprint 8: Revisión de Propuestas y Merge ──── */
+
+    const handleAceptarBatch = useCallback(async (id: string, accion: 'aceptar' | 'rechazar') => {
+        try {
+            await api.post(`/api/audiencias/${audienciaId}/segmentos/batch-update`, {
+                decisiones: [{ segment_id: id, accion }]
+            })
+            // Actualizar el estado local (CanvasStore) para reflejar que la propuesta desapareció (o se aceptó)
+            const store = useCanvasStore.getState()
+            const updated = store.segments.map(seg => {
+                if (seg.id === id) {
+                    return {
+                        ...seg,
+                        texto_mejorado: accion === 'aceptar' ? (seg.texto_batch || seg.texto_mejorado) : seg.texto_mejorado,
+                        texto_batch: null
+                    }
+                }
+                return seg
+            })
+            store.setSegments(updated)
+        } catch (error) {
+            console.error('Error aplicando decisión batch:', error)
+        }
+    }, [audienciaId])
+
+    const handleAplicarMultiplesBatch = useCallback(async (decisiones: Array<{ segment_id: string, accion: string }>) => {
+        try {
+            await api.post(`/api/audiencias/${audienciaId}/segmentos/batch-update`, {
+                decisiones
+            })
+            
+            // Refrescar los segmentos trayéndolos de BD para estar 100% sincronizados
+            const resSegmentos = await api.get<Segmento[]>(`/api/audiencias/${audienciaId}/segmentos`)
+            useCanvasStore.getState().setSegments(resSegmentos.data)
+            
+        } catch (error) {
+            console.error('Error aplicando decisiones batch múltiples:', error)
+        }
+    }, [audienciaId])
 
     /* ── Timer ──────────────────────────────────────── */
 
@@ -215,39 +265,56 @@ export default function PaginaTranscripcion() {
                     </div>
                 </div>
 
-                {/* Connection status pill */}
-                <div
-                    className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs shrink-0"
-                    style={{
-                        background:
-                            connectionStatus === 'connected' ? 'rgba(34, 197, 94, 0.1)'
-                                : connectionStatus === 'reconnecting' ? 'rgba(249, 115, 22, 0.1)'
-                                    : 'rgba(148, 163, 184, 0.1)',
-                        color:
-                            connectionStatus === 'connected' ? '#4ADE80'
-                                : connectionStatus === 'reconnecting' ? '#FB923C'
-                                    : '#94A3B8',
-                    }}
-                >
-                    <span
-                        className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full"
+                {/* Right controls */}
+                <div className="flex items-center gap-2">
+                    {/* Connection status pill */}
+                    <div
+                        className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs shrink-0"
                         style={{
                             background:
+                                connectionStatus === 'connected' ? 'rgba(34, 197, 94, 0.1)'
+                                    : connectionStatus === 'reconnecting' ? 'rgba(249, 115, 22, 0.1)'
+                                        : 'rgba(148, 163, 184, 0.1)',
+                            color:
                                 connectionStatus === 'connected' ? '#4ADE80'
                                     : connectionStatus === 'reconnecting' ? '#FB923C'
                                         : '#94A3B8',
                         }}
-                    />
-                    <span className="hidden sm:inline">
-                        {connectionStatus === 'connected' ? 'Conectado'
-                            : connectionStatus === 'reconnecting' ? 'Reconectando...'
-                                : 'Desconectado'}
-                    </span>
-                    <span className="sm:hidden uppercase font-bold">
-                        {connectionStatus === 'connected' ? 'OK'
-                            : connectionStatus === 'reconnecting' ? '...'
-                                : 'OFF'}
-                    </span>
+                    >
+                        <span
+                            className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full"
+                            style={{
+                                background:
+                                    connectionStatus === 'connected' ? '#4ADE80'
+                                        : connectionStatus === 'reconnecting' ? '#FB923C'
+                                            : '#94A3B8',
+                            }}
+                        />
+                        <span className="hidden sm:inline">
+                            {connectionStatus === 'connected' ? 'Conectado'
+                                : connectionStatus === 'reconnecting' ? 'Reconectando...'
+                                    : 'Desconectado'}
+                        </span>
+                        <span className="sm:hidden uppercase font-bold">
+                            {connectionStatus === 'connected' ? 'OK'
+                                : connectionStatus === 'reconnecting' ? '...'
+                                    : 'OFF'}
+                        </span>
+                    </div>
+                    
+                    {/* Sprint 9: Ver Acta oficial */}
+                    <button
+                        onClick={() => router.push(`/audiencia/${audienciaId}/acta`)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all hover:brightness-110"
+                        style={{
+                            background: 'var(--accent-gold)',
+                            color: 'white',
+                            borderColor: 'transparent',
+                        }}
+                    >
+                        <span className="hidden sm:inline">📄 Redactar Acta</span>
+                        <span className="sm:hidden">📄</span>
+                    </button>
                 </div>
             </header>
 
@@ -324,6 +391,11 @@ export default function PaginaTranscripcion() {
 
                     {/* Canvas TipTap */}
                     <div className="flex-1 overflow-hidden relative">
+                        <RevisionBatchPanel 
+                            segmentos={segments} 
+                            onAceptar={handleAceptarBatch} 
+                            onAplicarBatch={handleAplicarMultiplesBatch} 
+                        />
                         <TranscriptionCanvas
                             ref={canvasRef}
                             soloLectura={isTranscribing}

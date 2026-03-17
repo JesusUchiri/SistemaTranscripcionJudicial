@@ -31,6 +31,8 @@ class SegmentoResponse(BaseModel):
     speaker_id: str
     texto_ia: str
     texto_editado: Optional[str]
+    texto_mejorado: Optional[str] = None
+    texto_batch: Optional[str] = None
     timestamp_inicio: float
     timestamp_fin: float
     confianza: float
@@ -41,3 +43,19 @@ class SegmentoResponse(BaseModel):
     palabras_json: Optional[dict]
 
     model_config = {"from_attributes": True}
+
+
+# ── Sprint 8: Revisión de Propuestas y Merge ──
+
+class BatchDecision(BaseModel):
+    segment_id: uuid.UUID
+    accion: str  # "aceptar" | "rechazar"
+
+
+class BatchUpdateRequest(BaseModel):
+    decisiones: list[BatchDecision]
+
+
+class BatchUpdateResponse(BaseModel):
+    actualizados: int
+    errores: int

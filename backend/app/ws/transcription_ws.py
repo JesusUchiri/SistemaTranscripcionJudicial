@@ -155,15 +155,16 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         if last_word in INCOMPLETE_ENDINGS:
             return True
 
-        # Muy corto (menos de 3 palabras) PERO no es respuesta corta válida
-        if len(words) < 3:
-            # Si tiene 1-2 palabras y termina en puntuación, puede estar completa
+        # Sprint 6: No procesar como segmento final bloques de menos de 5 palabras
+        # salvo respuestas cortas válidas (ya verificadas arriba)
+        if len(words) < 5:
+            # Si tiene 1-4 palabras y termina en puntuación, puede estar completa
             if text.strip()[-1] in '.?!':
                 return False
             return True
 
         # No termina en puntuación (y no es muy corto)
-        if len(words) >= 3 and not text.strip()[-1] in '.?!':
+        if len(words) >= 5 and not text.strip()[-1] in '.?!':
             # Pero si tiene más de 15 palabras sin puntuación, probablemente está completo
             if len(words) > 15:
                 return False

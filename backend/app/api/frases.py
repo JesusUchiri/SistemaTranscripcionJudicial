@@ -129,3 +129,28 @@ async def actualizar_frase(
     await db.commit()
     await db.refresh(frase)
     return frase
+
+
+@router.delete("/{frase_id}", status_code=204)
+async def eliminar_frase(
+    frase_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """Elimina una frase personalizada del usuario (no se pueden eliminar frases del sistema)."""
+    resultado = await db.execute(
+        select(FraseEstandar).where(
+            FraseEstandar.id == frase_id,
+            FraseEstandar.usuario_id == usuario.id,
+        )
+    )
+    frase = resultado.scalar_one_or_none()
+    if not frase:
+        raise HTTPException(
+            status_code=404,
+            detail="Frase no encontrada o no le pertenece (las frases del sistema no se pueden eliminar)",
+        )
+
+    await db.delete(frase)
+    await db.commit()
+

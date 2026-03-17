@@ -125,3 +125,74 @@ async def analyze_structure(request: CapitalizeRequest):
         return structure
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Sprint 6 F5: Sugerencia de reemplazo para la palabra actual ──
+
+class ReplacementRequest(BaseModel):
+    """Request para obtener sugerencia de reemplazo 1:1."""
+    word: str
+    sentence: str
+    previous_context: Optional[str] = None
+
+
+class ReplacementCandidate(BaseModel):
+    """Una sugerencia de reemplazo."""
+    word: str
+    confidence: float
+    reason: str
+
+
+class ReplacementResponse(BaseModel):
+    """Response con sugerencias de reemplazo (nunca continuación)."""
+    original_word: str
+    is_correct: bool
+    candidates: List[ReplacementCandidate] = []
+    corrected_sentence: Optional[str] = None
+
+
+@router.post("/replace", response_model=ReplacementResponse)
+async def get_replacement(request: ReplacementRequest):
+    """
+    Sprint 6: Sugerencia de reemplazo para la palabra actual.
+
+    A diferencia de /suggest (que predice continuación), este endpoint
+    solo devuelve REEMPLAZOS 1:1 para la palabra seleccionada en su contexto.
+    Nunca devuelve continuación de frase.
+
+    Flujo:
+    1. Recibe word + sentence (frase completa donde aparece)
+    2. Consulta al servicio de análisis contextual (Claude)
+    3. Devuelve candidatos de reemplazo ordenados por confianza
+    """
+    try:
+        from app.services.context_analysis import get_context_service
+
+        service = get_context_service()
+        result = await service.analyze_word_in_context(
+            word=request.word,
+            sentence=request.sentence,
+            confidence=0.5,  # Solicitada por el usuario, asumir baja
+            previous_context=request.previous_context,
+        )
+
+        candidates = []
+        for sug in result.get("suggestions", []):
+            # Solo incluir sugerencias que sean reemplazo 1:1 (una sola palabra)
+            suggested_word = sug.get("word", "")
+            if suggested_word and " " not in suggested_word:
+                candidates.append(ReplacementCandidate(
+                    word=suggested_word,
+                    confidence=sug.get("confidence", 0.5),
+                    reason=sug.get("reason", ""),
+                ))
+
+        return ReplacementResponse(
+            original_word=request.word,
+            is_correct=result.get("is_correct", True),
+            candidates=candidates[:5],  # Máximo 5 candidatos
+            corrected_sentence=result.get("corrected_sentence"),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

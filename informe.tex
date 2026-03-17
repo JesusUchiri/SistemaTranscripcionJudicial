@@ -355,9 +355,9 @@ Desarrollo por sprints con 5 funcionalidades concretas por sprint. Cada sprint e
 \subsubsection{Funcionalidad 2: Autenticación y Roles}
 
 \begin{itemize}
-    \item Endpoints de login y refresh con JWT (access + refresh).
-    \item Roles: admin, transcriptor, supervisor. Guards por rol.
-    \item Bcrypt para contraseñas. Tabla usuarios con email, nombre, rol, activo.
+    \item \textbf{Endpoints:} \texttt{POST /api/auth/login}, \texttt{POST /api/auth/refresh}, \texttt{POST /api/auth/register} (solo admin), \texttt{GET /api/auth/me}. JWT: access token en el cuerpo de la respuesta (Bearer); refresh token en cookie \texttt{httpOnly} (7 días) para renovar el access sin re-login.
+    \item \textbf{Roles:} admin, transcriptor, supervisor (enum \texttt{rol\_usuario} en BD). Guards por rol mediante la dependencia \texttt{require\_role()} en FastAPI: registro de usuarios solo para admin; listado de audiencias y acceso al WebSocket filtrado por rol (transcriptor solo sus audiencias; admin y supervisor ven todas).
+    \item \textbf{Contraseñas:} hasheo con bcrypt (salt por usuario); verificación en login. Tabla \texttt{usuarios}: \texttt{id}, \texttt{email}, \texttt{nombre}, \texttt{password\_hash}, \texttt{rol}, \texttt{activo}, \texttt{created\_at}. No se almacenan contraseñas en claro.
 \end{itemize}
 
 \subsubsection{Funcionalidad 3: Frontend Next.js Base}
@@ -371,17 +371,17 @@ Desarrollo por sprints con 5 funcionalidades concretas por sprint. Cada sprint e
 \subsubsection{Funcionalidad 4: API REST de Audiencias y Estructura Clara del Documento}
 
 \begin{itemize}
-    \item CRUD de audiencias con \textbf{estructura completa del documento}: expediente, juzgado, tipo\_audiencia (juicio oral, prisión preventiva, apelación, etc.), instancia (juzgado\_unipersonal, sala\_apelaciones), fecha, hora\_inicio, sala, delito, imputado\_nombre, agraviado\_nombre, especialista\_causa, especialista\_audiencia, estado.
-    \item Listar y filtrar por fecha, juzgado, estado. El documento de audiencia tiene una estructura clara y predecible para transcripción y acta.
+    \item CRUD de audiencias (\texttt{POST/GET/PUT /api/audiencias}) con \textbf{estructura completa del documento}: expediente, juzgado, tipo\_audiencia (juicio oral, prisión preventiva, apelación, etc.), instancia (juzgado\_unipersonal, sala\_apelaciones), fecha, hora\_inicio, hora\_fin, sala, delito, imputado\_nombre, agraviado\_nombre, especialista\_causa, especialista\_audiencia, estado. Creación con \texttt{created\_by} del usuario autenticado.
+    \item Listar con paginación y filtrar por fecha (desde/hasta), juzgado, estado, expediente, tipo\_audiencia. Regla de visibilidad: transcriptor solo sus audiencias; admin y supervisor todas. El documento de audiencia tiene una estructura clara y predecible para transcripción y acta.
     \item Opcional en Sprint 1: carga de plantilla o secciones por tipo de audiencia (templates\_audiencia) para preestructurar el Canvas según el tipo.
 \end{itemize}
 
 \subsubsection{Funcionalidad 5: Integración WebSocket con Deepgram y Detección Multi-Rol}
 
 \begin{itemize}
-    \item Servicio DeepgramStreamingService: conexión WSS a Deepgram Nova-3 (es-419, \textbf{diarize=true} para detección de múltiples hablantes, smart\_format, keyterms).
-    \item Cada resultado incluye \texttt{speaker} (SPEAKER\_00, SPEAKER\_01, etc.): base para \textbf{detección multi-rol} en tiempo real.
-    \item Endpoint WebSocket /ws/transcripcion/\{audiencia\_id\} con token JWT en query. Recepción de resultados (transcript, speaker, confidence, words) y callback al handler.
+    \item Servicio \texttt{DeepgramStreamingService}: conexión WSS a Deepgram Nova-3 (idioma es-419, \textbf{diarize=true}, smart\_format, keyterms jurídicos desde \texttt{legal\_keyterms}). Encoding linear16, 16\,kHz, mono.
+    \item Cada resultado incluye \texttt{speaker} por palabra (Deepgram devuelve entero; se normaliza a SPEAKER\_00, SPEAKER\_01, etc.): base para \textbf{detección multi-rol} en tiempo real.
+    \item Endpoint WebSocket \texttt{/ws/transcripcion/\{audiencia\_id\}} con token JWT en query (\texttt{?token=}). Validación de permiso por audiencia (created\_by o rol admin/supervisor). Recepción de resultados (transcript, speaker, confidence, words) y callback al handler; en paralelo se graba el audio en WAV.
 \end{itemize}
 
 \subsection{Sprint 2: Guardado de Audios y Transcripciones}
@@ -393,15 +393,15 @@ Este sprint garantiza que \textbf{audios y transcripciones se guarden correctame
 \subsubsection{Funcionalidad 1: Captura de Audio en el Navegador}
 
 \begin{itemize}
-    \item Hook useAudioCapture: MediaRecorder a 16\,kHz mono, chunks cada 250\,ms.
-    \item Envío por WebSocket (type: audio\_chunk, data: base64). Selección de fuente (micrófono, audio del sistema).
+    \item Hook \texttt{useAudioCapture}: captura a 16\,kHz mono (AudioContext y buffers PCM); chunks cada 250\,ms enviados por callback.
+    \item Envío por WebSocket (\texttt{type: audio\_chunk}, \texttt{data:} base64). Selección de fuente: micrófono, audio del sistema (\texttt{getDisplayMedia}) o dispositivo por \texttt{deviceId}.
 \end{itemize}
 
 \subsubsection{Funcionalidad 2: Grabación WAV en Servidor (Guardado Correcto de Audio)}
 
 \begin{itemize}
-    \item En transcription\_ws: apertura de archivo WAV (16\,bit, 16\,kHz, mono) por audiencia en ruta persistente (ej. \texttt{AUDIO\_STORAGE\_PATH}).
-    \item Escritura de frames por cada chunk recibido. Cierre correcto del archivo y actualización en BD de \texttt{audio\_path} y \texttt{audio\_duration\_seconds} al finalizar la sesión.
+    \item En \texttt{transcription\_ws}: apertura de archivo WAV (16\,bit, 16\,kHz, mono) por audiencia en ruta persistente (\texttt{AUDIO\_STORAGE\_PATH}), nombre \texttt{\{audiencia\_id\}.wav}.
+    \item Escritura de frames por cada \texttt{audio\_chunk} recibido. Al cerrar la conexión: cierre correcto del archivo; actualización en BD de \texttt{audio\_path}, \texttt{audio\_duration\_seconds} (calculado desde el WAV) y \texttt{estado=transcrita}.
     \item El audio queda guardado de forma confiable para consulta posterior y para procesamiento batch (Nivel 2).
 \end{itemize}
 
@@ -636,32 +636,32 @@ Este sprint implementa las mejoras del plan de revisión para minimizar el marge
     \item Cola Redis; reintentos (max\_retries=3) en caso de fallo. Logs de progreso para monitoreo.
 \end{itemize}
 
-\subsubsection{Funcionalidad 2: Transcripción con faster-whisper large-v3}
+\subsubsection{Funcionalidad 2: Transcripción Batch con Deepgram Nova-3}
 
 \begin{itemize}
-    \item Transcripción del archivo WAV completo con faster-whisper (modelo large-v3, beam\_size=5, word\_timestamps=True, language=es).
-    \item Initial prompt con terminología judicial y keyterms de Cusco para mejorar precisión. Salida: segmentos con texto y timestamps por palabra.
+    \item Para mantener uniformidad en el stack tecnológico y evitar dependencias extremas de infraestructrura (GPU requerida para Whisper/Pyannote), se utiliza la API Pre-recorded de Deepgram (Modelo Nova-3).
+    \item Transcripción del archivo WAV pregrabado de forma asíncrona de altísima velocidad y precisión comprobada en el contexto peruano usando \texttt{smart\_format=true}.
 \end{itemize}
 
-\subsubsection{Funcionalidad 3: Diarización con Pyannote 3.1}
+\subsubsection{Funcionalidad 3: Diarización Integrada en Deepgram}
 
 \begin{itemize}
-    \item Pipeline Pyannote sobre el mismo audio: identificación de speakers (SPEAKER\_00, SPEAKER\_01, etc.) con timestamps de inicio y fin de cada turno.
-    \item Requiere GPU (NVIDIA RTX 3060 12GB mínimo) o ejecución en servicio externo.
+    \item Aprovechamiento de la flag \texttt{diarize=true} en la petición a Deepgram Batch.
+    \item Identificación automática de speakers integrados directamente en el JSON de respuesta ahorrando el algoritmo de cruce temporal que requeriría Pyannote.
 \end{itemize}
 
-\subsubsection{Funcionalidad 4: Alineación temporal transcripción--diarización}
+\subsubsection{Funcionalidad 4: Alineamiento temporal por overlapping de palabras}
 
 \begin{itemize}
-    \item Servicio de alineación: cruce por superposición temporal entre palabras de faster-whisper y segmentos de Pyannote.
-    \item Asignación de speaker\_id a cada palabra/segmento de la transcripción batch. Fusión en segmentos coherentes con texto y speaker.
+    \item Servicio de alineación en \texttt{batch\_process\_audio}: se extraen los timestamps de cada palabra (\texttt{word.start}, \texttt{word.end}) devueltos por Deepgram.
+    \item Para cada segmento de streaming en la BD, se extraen las palabras del resultado Batch que inciden directamente en sus timestamps (\texttt{+/- 0.5s}), formando frases precisas y alineadas milisegundo a milisegundo.
 \end{itemize}
 
 \subsubsection{Funcionalidad 5: Propuestas de mejora sin tocar editado\_por\_usuario}
 
 \begin{itemize}
-    \item Comparación resultado batch vs segmentos ya guardados (streaming). Para cada segmento: si \texttt{editado\_por\_usuario=true}, no se genera propuesta.
-    \item Si la diferencia (Levenshtein o similar) supera umbral configurable, se crea propuesta de mejora para que el digitador acepte o rechace en la vista de revisión.
+    \item Comparación de la frase Batch reconstruida vs el segmento en base de datos. Si \texttt{editado\_por\_usuario=true}, no se hace nada.
+    \item Si el texto difiere y supera un umbral de similitud configurado (\texttt{ratio < 0.95} y \texttt{> 0.4}), se crea una "propuesta de mejora" y se guarda en la nueva columna \texttt{texto\_batch} de la tabla \texttt{Segmento}.
 \end{itemize}
 
 \subsection{Sprint 8: Revisión de Propuestas y Merge}

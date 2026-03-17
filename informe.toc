@@ -1,0 +1,187 @@
+\babel@toc {spanish}{}\relax 
+\contentsline {chapter}{Lista de Tablas}{7}{Doc-Start}%
+\contentsline {chapter}{\numberline {1}Resumen Ejecutivo}{1}{chapter.1}%
+\contentsline {section}{\numberline {1.1}Visión General del Proyecto}{1}{section.1.1}%
+\contentsline {subsection}{\numberline {1.1.1}Descripción del Problema}{1}{subsection.1.1.1}%
+\contentsline {subsection}{\numberline {1.1.2}Solución Propuesta}{1}{subsection.1.1.2}%
+\contentsline {subsection}{\numberline {1.1.3}Componentes del Sistema}{1}{subsection.1.1.3}%
+\contentsline {section}{\numberline {1.2}Modelo de Implementación por Niveles}{2}{section.1.2}%
+\contentsline {section}{\numberline {1.3}Beneficios Cuantificables}{2}{section.1.3}%
+\contentsline {chapter}{\numberline {2}Análisis de Contexto y Stakeholders}{3}{chapter.2}%
+\contentsline {section}{\numberline {2.1}Contexto de Negocio}{3}{section.2.1}%
+\contentsline {subsection}{\numberline {2.1.1}Organización}{3}{subsection.2.1.1}%
+\contentsline {section}{\numberline {2.2}Análisis de Stakeholders}{3}{section.2.2}%
+\contentsline {subsection}{\numberline {2.2.1}Digitador (Transcriptor)}{3}{subsection.2.2.1}%
+\contentsline {subsection}{\numberline {2.2.2}Supervisor}{3}{subsection.2.2.2}%
+\contentsline {subsection}{\numberline {2.2.3}Administrador}{3}{subsection.2.2.3}%
+\contentsline {section}{\numberline {2.3}Matriz RACI}{4}{section.2.3}%
+\contentsline {chapter}{\numberline {3}Arquitectura del Sistema}{5}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Visión General}{5}{section.3.1}%
+\contentsline {section}{\numberline {3.2}Stack Tecnológico}{5}{section.3.2}%
+\contentsline {section}{\numberline {3.3}Modelo de Datos Principal}{5}{section.3.3}%
+\contentsline {section}{\numberline {3.4}Comunicación en Tiempo Real}{5}{section.3.4}%
+\contentsline {section}{\numberline {3.5}Seguridad del Sistema}{6}{section.3.5}%
+\contentsline {chapter}{\numberline {4}Roadmap de Implementación}{7}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Filosofía de Desarrollo}{7}{section.4.1}%
+\contentsline {section}{\numberline {4.2}Nivel 1 (Mes 1): Producto Mínimo Viable}{7}{section.4.2}%
+\contentsline {subsection}{\numberline {4.2.1}Sprint 1: Infraestructura, Base de Datos y Estructura del Documento}{7}{subsection.4.2.1}%
+\contentsline {subsubsection}{\numberline {4.2.1.1}Funcionalidad 1: Configuración del Backend y Base de Datos}{7}{subsubsection.4.2.1.1}%
+\contentsline {subsubsection}{\numberline {4.2.1.2}Funcionalidad 2: Autenticación y Roles}{8}{subsubsection.4.2.1.2}%
+\contentsline {subsubsection}{\numberline {4.2.1.3}Funcionalidad 3: Frontend Next.js Base}{8}{subsubsection.4.2.1.3}%
+\contentsline {subsubsection}{\numberline {4.2.1.4}Funcionalidad 4: API REST de Audiencias y Estructura Clara del Documento}{8}{subsubsection.4.2.1.4}%
+\contentsline {subsubsection}{\numberline {4.2.1.5}Funcionalidad 5: Integración WebSocket con Deepgram y Detección Multi-Rol}{8}{subsubsection.4.2.1.5}%
+\contentsline {subsection}{\numberline {4.2.2}Sprint 2: Guardado de Audios y Transcripciones}{8}{subsection.4.2.2}%
+\contentsline {subsubsection}{\numberline {4.2.2.1}Funcionalidad 1: Captura de Audio en el Navegador}{9}{subsubsection.4.2.2.1}%
+\contentsline {subsubsection}{\numberline {4.2.2.2}Funcionalidad 2: Grabación WAV en Servidor (Guardado Correcto de Audio)}{9}{subsubsection.4.2.2.2}%
+\contentsline {subsubsection}{\numberline {4.2.2.3}Funcionalidad 3: Modelo y Persistencia de Segmentos (Guardado Correcto de Transcripciones)}{9}{subsubsection.4.2.2.3}%
+\contentsline {subsubsection}{\numberline {4.2.2.4}Funcionalidad 4: Consolidación de Segmentos por Speaker}{9}{subsubsection.4.2.2.4}%
+\contentsline {subsubsection}{\numberline {4.2.2.5}Funcionalidad 5: Envío de Segmentos al Cliente}{9}{subsubsection.4.2.2.5}%
+\contentsline {subsection}{\numberline {4.2.3}Sprint 3: Mejoramiento en Tiempo Real y Diccionario Jurídico}{9}{subsection.4.2.3}%
+\contentsline {subsubsection}{\numberline {4.2.3.1}Funcionalidad 1: Servicio de Mejoramiento en Tiempo Real (Claude)}{10}{subsubsection.4.2.3.1}%
+\contentsline {subsubsection}{\numberline {4.2.3.2}Funcionalidad 2: Detección de Completitud de Frase}{10}{subsubsection.4.2.3.2}%
+\contentsline {subsubsection}{\numberline {4.2.3.3}Funcionalidad 3: Diccionario Jurídico con Fuzzy Matching}{10}{subsubsection.4.2.3.3}%
+\contentsline {subsubsection}{\numberline {4.2.3.4}Funcionalidad 4: Keyterms para Deepgram}{10}{subsubsection.4.2.3.4}%
+\contentsline {subsubsection}{\numberline {4.2.3.5}Funcionalidad 5: Integración Mejoramiento + Diccionario en el Flujo}{10}{subsubsection.4.2.3.5}%
+\contentsline {subsection}{\numberline {4.2.4}Sprint 4: Canvas TipTap y Panel de Hablantes}{11}{subsection.4.2.4}%
+\contentsline {subsubsection}{\numberline {4.2.4.1}Funcionalidad 1: Editor TipTap con Extensiones}{11}{subsubsection.4.2.4.1}%
+\contentsline {subsubsection}{\numberline {4.2.4.2}Funcionalidad 2: Panel de Hablantes}{11}{subsubsection.4.2.4.2}%
+\contentsline {subsubsection}{\numberline {4.2.4.3}Funcionalidad 3: Reproductor de Audio}{11}{subsubsection.4.2.4.3}%
+\contentsline {subsubsection}{\numberline {4.2.4.4}Funcionalidad 4: Marcadores y Panel de Marcadores}{11}{subsubsection.4.2.4.4}%
+\contentsline {subsubsection}{\numberline {4.2.4.5}Funcionalidad 5: Sugerencias en el Canvas}{11}{subsubsection.4.2.4.5}%
+\contentsline {subsection}{\numberline {4.2.5}Sprint 5: Estabilización, Frases Estándar y Puesta en Producción}{12}{subsection.4.2.5}%
+\contentsline {subsubsection}{\numberline {4.2.5.1}Funcionalidad 1: Frases Estándar y Atajos}{12}{subsubsection.4.2.5.1}%
+\contentsline {subsubsection}{\numberline {4.2.5.2}Funcionalidad 2: Predicción y Análisis Contextual}{12}{subsubsection.4.2.5.2}%
+\contentsline {subsubsection}{\numberline {4.2.5.3}Funcionalidad 3: Barra de Estado y Persistencia de Ediciones}{12}{subsubsection.4.2.5.3}%
+\contentsline {subsubsection}{\numberline {4.2.5.4}Funcionalidad 4: Generación de Acta (Borrador)}{12}{subsubsection.4.2.5.4}%
+\contentsline {subsubsection}{\numberline {4.2.5.5}Funcionalidad 5: Docker Compose y Despliegue}{12}{subsubsection.4.2.5.5}%
+\contentsline {section}{\numberline {4.3}Nivel 2 (Mes 2): Mejoras de Precisión, Batch, Acta y Exportación}{13}{section.4.3}%
+\contentsline {subsection}{\numberline {4.3.1}Sprint 6: Mejoras de Precisión y Reglas de No-Añadir Palabras}{13}{subsection.4.3.1}%
+\contentsline {subsubsection}{\numberline {4.3.1.1}Funcionalidad 1: Regla Explícita en Claude (No Añadir Palabras)}{13}{subsubsection.4.3.1.1}%
+\contentsline {subsubsection}{\numberline {4.3.1.2}Funcionalidad 2: Autocompletado Solo como Corrección (Reemplazo 1:1)}{14}{subsubsection.4.3.1.2}%
+\contentsline {subsubsection}{\numberline {4.3.1.3}Funcionalidad 3: Umbrales de Confianza y Falsos Positivos}{14}{subsubsection.4.3.1.3}%
+\contentsline {subsubsection}{\numberline {4.3.1.4}Funcionalidad 4: Consolidación y Completitud de Frase}{14}{subsubsection.4.3.1.4}%
+\contentsline {subsubsection}{\numberline {4.3.1.5}Funcionalidad 5: API de Sugerencia de Reemplazo (Opcional)}{14}{subsubsection.4.3.1.5}%
+\contentsline {subsection}{\numberline {4.3.2}Sprint 7: Procesamiento Batch de Audio}{14}{subsection.4.3.2}%
+\contentsline {subsubsection}{\numberline {4.3.2.1}Funcionalidad 1: Tarea Celery batch\_process\_audio}{15}{subsubsection.4.3.2.1}%
+\contentsline {subsubsection}{\numberline {4.3.2.2}Funcionalidad 2: Transcripción con faster-whisper large-v3}{15}{subsubsection.4.3.2.2}%
+\contentsline {subsubsection}{\numberline {4.3.2.3}Funcionalidad 3: Diarización con Pyannote 3.1}{15}{subsubsection.4.3.2.3}%
+\contentsline {subsubsection}{\numberline {4.3.2.4}Funcionalidad 4: Alineación temporal transcripción--diarización}{15}{subsubsection.4.3.2.4}%
+\contentsline {subsubsection}{\numberline {4.3.2.5}Funcionalidad 5: Propuestas de mejora sin tocar editado\_por\_usuario}{15}{subsubsection.4.3.2.5}%
+\contentsline {subsection}{\numberline {4.3.3}Sprint 8: Revisión de Propuestas y Merge}{15}{subsection.4.3.3}%
+\contentsline {subsubsection}{\numberline {4.3.3.1}Funcionalidad 1: Vista de comparación batch vs streaming}{15}{subsubsection.4.3.3.1}%
+\contentsline {subsubsection}{\numberline {4.3.3.2}Funcionalidad 2: Aceptar o rechazar por segmento}{16}{subsubsection.4.3.3.2}%
+\contentsline {subsubsection}{\numberline {4.3.3.3}Funcionalidad 3: API batch-update}{16}{subsubsection.4.3.3.3}%
+\contentsline {subsubsection}{\numberline {4.3.3.4}Funcionalidad 4: Actualización del Canvas}{16}{subsubsection.4.3.3.4}%
+\contentsline {subsubsection}{\numberline {4.3.3.5}Funcionalidad 5: Historial de cambios batch}{16}{subsubsection.4.3.3.5}%
+\contentsline {subsection}{\numberline {4.3.4}Sprint 9: Editor de Acta y Aprobación}{16}{subsection.4.3.4}%
+\contentsline {subsubsection}{\numberline {4.3.4.1}Funcionalidad 1: ActaEditor TipTap}{16}{subsubsection.4.3.4.1}%
+\contentsline {subsubsection}{\numberline {4.3.4.2}Funcionalidad 2: Guardado de contenido\_final}{16}{subsubsection.4.3.4.2}%
+\contentsline {subsubsection}{\numberline {4.3.4.3}Funcionalidad 3: Versionado de actas}{16}{subsubsection.4.3.4.3}%
+\contentsline {subsubsection}{\numberline {4.3.4.4}Funcionalidad 4: Flujo aprobar acta (supervisor)}{17}{subsubsection.4.3.4.4}%
+\contentsline {subsubsection}{\numberline {4.3.4.5}Funcionalidad 5: Estados borrador, en\_revision, aprobada, exportada}{17}{subsubsection.4.3.4.5}%
+\contentsline {subsection}{\numberline {4.3.5}Sprint 10: Exportación DOCX/PDF y Estabilización Nivel 2}{17}{subsection.4.3.5}%
+\contentsline {subsubsection}{\numberline {4.3.5.1}Funcionalidad 1: Plantilla de acta (python-docx)}{17}{subsubsection.4.3.5.1}%
+\contentsline {subsubsection}{\numberline {4.3.5.2}Funcionalidad 2: Exportar DOCX con formato oficial}{17}{subsubsection.4.3.5.2}%
+\contentsline {subsubsection}{\numberline {4.3.5.3}Funcionalidad 3: Exportar PDF}{17}{subsubsection.4.3.5.3}%
+\contentsline {subsubsection}{\numberline {4.3.5.4}Funcionalidad 4: Descarga por audiencia}{17}{subsubsection.4.3.5.4}%
+\contentsline {subsubsection}{\numberline {4.3.5.5}Funcionalidad 5: Estabilización y cierre de Nivel 2}{17}{subsubsection.4.3.5.5}%
+\contentsline {section}{\numberline {4.4}Nivel 3 (Mes 3): Cierre y Soporte}{18}{section.4.4}%
+\contentsline {subsection}{\numberline {4.4.1}Sprint 11: Mejoras de UI/UX y Rendimiento}{18}{subsection.4.4.1}%
+\contentsline {subsection}{\numberline {4.4.2}Sprint 12: Corpus y Aprendizaje del Sistema}{18}{subsection.4.4.2}%
+\contentsline {subsection}{\numberline {4.4.3}Sprints 13--15: Cierre del Proyecto}{18}{subsection.4.4.3}%
+\contentsline {chapter}{\numberline {5}Especificación Funcional Detallada}{20}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Módulo: Transcripción en Tiempo Real}{20}{section.5.1}%
+\contentsline {subsection}{\numberline {5.1.1}Flujo General}{20}{subsection.5.1.1}%
+\contentsline {subsection}{\numberline {5.1.2}Regla de No-Sobreescritura}{20}{subsection.5.1.2}%
+\contentsline {subsection}{\numberline {5.1.3}Datos del Segmento}{21}{subsection.5.1.3}%
+\contentsline {section}{\numberline {5.2}Módulo: Canvas y Edición}{21}{section.5.2}%
+\contentsline {section}{\numberline {5.3}Módulo: Generación de Acta}{21}{section.5.3}%
+\contentsline {section}{\numberline {5.4}Módulo: Hablantes y Marcadores}{21}{section.5.4}%
+\contentsline {chapter}{\numberline {6}Modelo de Pricing y Costos}{23}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Filosofía de Pricing}{23}{section.6.1}%
+\contentsline {section}{\numberline {6.2}Estructura de Inversión por Nivel}{23}{section.6.2}%
+\contentsline {subsection}{\numberline {6.2.1}Qué incluye cada nivel}{23}{subsection.6.2.1}%
+\contentsline {section}{\numberline {6.3}Costos de Infraestructura (Responsabilidad del Cliente)}{24}{section.6.3}%
+\contentsline {section}{\numberline {6.4}Opciones de Mantenimiento Post-Desarrollo}{24}{section.6.4}%
+\contentsline {section}{\numberline {6.5}Garantías}{25}{section.6.5}%
+\contentsline {chapter}{\numberline {7}Requerimientos No Funcionales}{26}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Rendimiento y Tiempo de Respuesta}{26}{section.7.1}%
+\contentsline {section}{\numberline {7.2}Disponibilidad y Confiabilidad}{26}{section.7.2}%
+\contentsline {section}{\numberline {7.3}Seguridad}{26}{section.7.3}%
+\contentsline {section}{\numberline {7.4}Usabilidad}{27}{section.7.4}%
+\contentsline {section}{\numberline {7.5}Escalabilidad}{27}{section.7.5}%
+\contentsline {section}{\numberline {7.6}Compatibilidad}{27}{section.7.6}%
+\contentsline {section}{\numberline {7.7}Mantenibilidad}{27}{section.7.7}%
+\contentsline {chapter}{\numberline {8}Historias de Usuario y Criterios de Aceptación}{28}{chapter.8}%
+\contentsline {section}{\numberline {8.1}Formato de Historias de Usuario}{28}{section.8.1}%
+\contentsline {section}{\numberline {8.2}Historias de Usuario -- Digitador (Transcriptor)}{28}{section.8.2}%
+\contentsline {subsection}{\numberline {8.2.1}HU-DIG-001: Transcribir audiencia en tiempo real}{28}{subsection.8.2.1}%
+\contentsline {subsection}{\numberline {8.2.2}HU-DIG-002: Corregir palabras con sugerencias del diccionario}{28}{subsection.8.2.2}%
+\contentsline {subsection}{\numberline {8.2.3}HU-DIG-003: Editar segmentos sin que la IA los sobrescriba}{29}{subsection.8.2.3}%
+\contentsline {subsection}{\numberline {8.2.4}HU-DIG-004: Generar acta desde el Canvas}{29}{subsection.8.2.4}%
+\contentsline {subsection}{\numberline {8.2.5}HU-DIG-005: Exportar acta a Word y PDF}{29}{subsection.8.2.5}%
+\contentsline {section}{\numberline {8.3}Historias de Usuario -- Supervisor}{29}{section.8.3}%
+\contentsline {subsection}{\numberline {8.3.1}HU-SUP-001: Aprobar acta para exportación}{29}{subsection.8.3.1}%
+\contentsline {section}{\numberline {8.4}Priorización MoSCoW}{30}{section.8.4}%
+\contentsline {chapter}{\numberline {9}UI/UX y Sistema de Diseño}{31}{chapter.9}%
+\contentsline {section}{\numberline {9.1}Principios de Diseño}{31}{section.9.1}%
+\contentsline {section}{\numberline {9.2}Sistema de Diseño}{31}{section.9.2}%
+\contentsline {subsection}{\numberline {9.2.1}Paleta de Colores}{31}{subsection.9.2.1}%
+\contentsline {subsection}{\numberline {9.2.2}Tipografía}{32}{subsection.9.2.2}%
+\contentsline {section}{\numberline {9.3}Flujos de Usuario Principales}{32}{section.9.3}%
+\contentsline {section}{\numberline {9.4}Layout de Pantalla}{32}{section.9.4}%
+\contentsline {section}{\numberline {9.5}Indicadores Visuales en el Canvas}{33}{section.9.5}%
+\contentsline {section}{\numberline {9.6}Accesibilidad}{33}{section.9.6}%
+\contentsline {chapter}{\numberline {10}Casos de Uso Detallados}{34}{chapter.10}%
+\contentsline {section}{\numberline {10.1}Formato de Casos de Uso}{34}{section.10.1}%
+\contentsline {section}{\numberline {10.2}CU-001: Transcribir Audiencia en Tiempo Real}{34}{section.10.2}%
+\contentsline {subsection}{\numberline {10.2.1}Información General}{34}{subsection.10.2.1}%
+\contentsline {subsection}{\numberline {10.2.2}Precondiciones}{34}{subsection.10.2.2}%
+\contentsline {subsection}{\numberline {10.2.3}Postcondiciones (Éxito)}{34}{subsection.10.2.3}%
+\contentsline {subsection}{\numberline {10.2.4}Flujo Principal}{35}{subsection.10.2.4}%
+\contentsline {section}{\numberline {10.3}CU-002: Corregir Segmento con Sugerencia del Diccionario}{35}{section.10.3}%
+\contentsline {subsection}{\numberline {10.3.1}Información General}{35}{subsection.10.3.1}%
+\contentsline {subsection}{\numberline {10.3.2}Precondiciones}{35}{subsection.10.3.2}%
+\contentsline {subsection}{\numberline {10.3.3}Flujo Principal}{36}{subsection.10.3.3}%
+\contentsline {section}{\numberline {10.4}CU-003: Generar Acta desde el Canvas}{36}{section.10.4}%
+\contentsline {subsection}{\numberline {10.4.1}Información General}{36}{subsection.10.4.1}%
+\contentsline {subsection}{\numberline {10.4.2}Precondiciones}{36}{subsection.10.4.2}%
+\contentsline {subsection}{\numberline {10.4.3}Flujo Principal}{36}{subsection.10.4.3}%
+\contentsline {section}{\numberline {10.5}CU-004: Aprobar Acta y Exportar DOCX/PDF}{37}{section.10.5}%
+\contentsline {subsection}{\numberline {10.5.1}Información General}{37}{subsection.10.5.1}%
+\contentsline {subsection}{\numberline {10.5.2}Precondiciones}{37}{subsection.10.5.2}%
+\contentsline {subsection}{\numberline {10.5.3}Flujo Principal}{37}{subsection.10.5.3}%
+\contentsline {chapter}{\numberline {11}Plan de Pruebas}{38}{chapter.11}%
+\contentsline {section}{\numberline {11.1}Estrategia de Pruebas}{38}{section.11.1}%
+\contentsline {section}{\numberline {11.2}Pruebas Unitarias Clave}{38}{section.11.2}%
+\contentsline {section}{\numberline {11.3}Pruebas End-to-End (E2E)}{38}{section.11.3}%
+\contentsline {section}{\numberline {11.4}Pruebas de Rendimiento}{39}{section.11.4}%
+\contentsline {section}{\numberline {11.5}Pruebas de Usabilidad con Usuarios Reales}{39}{section.11.5}%
+\contentsline {section}{\numberline {11.6}Criterios de Aceptación por Sprint}{39}{section.11.6}%
+\contentsline {chapter}{\numberline {12}Plan de Capacitación}{40}{chapter.12}%
+\contentsline {section}{\numberline {12.1}Estrategia de Capacitación}{40}{section.12.1}%
+\contentsline {section}{\numberline {12.2}Plan de Capacitación por Rol}{40}{section.12.2}%
+\contentsline {subsection}{\numberline {12.2.1}Capacitación para el Digitador (Transcriptor)}{40}{subsection.12.2.1}%
+\contentsline {subsection}{\numberline {12.2.2}Capacitación para el Supervisor}{41}{subsection.12.2.2}%
+\contentsline {subsection}{\numberline {12.2.3}Capacitación para el Administrador}{41}{subsection.12.2.3}%
+\contentsline {section}{\numberline {12.3}Evaluación Post-Capacitación}{41}{section.12.3}%
+\contentsline {section}{\numberline {12.4}Soporte Post-Capacitación}{41}{section.12.4}%
+\contentsline {chapter}{\numberline {13}Soporte y Mantenimiento}{42}{chapter.13}%
+\contentsline {section}{\numberline {13.1}Período de Garantía}{42}{section.13.1}%
+\contentsline {section}{\numberline {13.2}Niveles de Soporte y SLA}{42}{section.13.2}%
+\contentsline {section}{\numberline {13.3}Canales de Soporte}{42}{section.13.3}%
+\contentsline {section}{\numberline {13.4}Mantenimiento Preventivo}{43}{section.13.4}%
+\contentsline {section}{\numberline {13.5}Documentación Entregada al Finalizar el Proyecto}{43}{section.13.5}%
+\contentsline {chapter}{\numberline {14}Conclusiones y Próximos Pasos}{44}{chapter.14}%
+\contentsline {section}{\numberline {14.1}Hallazgos Principales}{44}{section.14.1}%
+\contentsline {section}{\numberline {14.2}Recomendaciones}{44}{section.14.2}%
+\contentsline {section}{\numberline {14.3}Próximos Pasos}{44}{section.14.3}%
+\contentsline {chapter}{\numberline {15}Anexos}{45}{chapter.15}%
+\contentsline {section}{\numberline {15.1}Anexo A: Glosario de Términos}{45}{section.15.1}%
+\contentsline {section}{\numberline {15.2}Anexo B: Referencias}{45}{section.15.2}%
+\contentsline {section}{\numberline {15.3}Anexo C: Referencias Normativas}{46}{section.15.3}%
+\contentsline {section}{\numberline {15.4}Anexo D: Control de Versiones del Documento}{46}{section.15.4}%
+\contentsline {chapter}{\numberline {16}Firmas de Aprobación}{47}{chapter.16}%
+\contentsline {section}{\numberline {16.1}Declaración de Conformidad}{47}{section.16.1}%
+\contentsline {section}{\numberline {16.2}Firmas}{47}{section.16.2}%
+\contentsline {section}{\numberline {16.3}Control de Aprobaciones por Nivel}{48}{section.16.3}%

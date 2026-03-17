@@ -11,6 +11,7 @@ from app.api.frases import router as frases_router
 from app.api.analysis import router as analysis_router
 from app.api.prediction import router as prediction_router
 from app.api.transcripcion_audio import router as transcripcion_audio_router
+from app.api.actas import router as actas_router
 
 router = APIRouter()
 
@@ -22,4 +23,5 @@ router.include_router(frases_router)
 router.include_router(analysis_router)
 router.include_router(prediction_router)
 router.include_router(transcripcion_audio_router)
+router.include_router(actas_router)
 

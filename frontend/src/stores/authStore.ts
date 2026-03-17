@@ -32,10 +32,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             await get().fetchUser()
             return true
         } catch (err: any) {
-            set({
-                isLoading: false,
-                error: err.response?.data?.detail || 'Error al iniciar sesión',
-            })
+            const isNetworkError = !err.response && (err.code === 'ERR_NETWORK' || err.message?.includes('Network'))
+            const detail = err.response?.data?.detail || ''
+            const is503 = err.response?.status === 503
+            const message = isNetworkError
+                ? 'No se puede conectar al servidor. Comprueba que el backend esté en marcha (puerto 8000).'
+                : is503
+                    ? 'Base de datos no disponible. Abre el túnel SSH: ejecuta backend\\abrir-tunel.bat, introduce la contraseña y deja la ventana abierta.'
+                    : (detail || 'Error al iniciar sesión')
+            set({ isLoading: false, error: message })
             return false
         }
     },

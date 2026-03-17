@@ -23,7 +23,10 @@ from app.schemas.audiencia import (
     AudienciaResponse,
     AudienciaUpdate,
 )
-from app.schemas.segmento import SegmentoResponse
+import logging
+from app.schemas.segmento import SegmentoResponse, BatchUpdateRequest, BatchUpdateResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/audiencias", tags=["audiencias"])
 
@@ -202,6 +205,72 @@ async def editar_segmento(
     await db.flush()
     await db.refresh(segmento)
     return segmento
+
+
+@router.post("/{audiencia_id}/segmentos/batch-update", response_model=BatchUpdateResponse)
+async def batch_update_segmentos(
+    audiencia_id: uuid.UUID,
+    request: BatchUpdateRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[Usuario, Depends(get_current_user)],
+):
+    """
+    Sprint 8 F3: API batch-update.
+    Acepta o rechaza múltiples propuestas batch de segmentos.
+    Si se acepta, se actualiza el segmento (usando texto_batch como texto_mejorado/texto_ia).
+    Si se rechaza, elimina la propuesta (texto_batch = None) para no volver a sugerir.
+    """
+    result = await db.execute(
+        select(Audiencia).where(Audiencia.id == audiencia_id)
+    )
+    audiencia = result.scalar_one_or_none()
+    if audiencia is None:
+        raise HTTPException(status_code=404, detail="Audiencia no encontrada")
+    if not _puede_acceder_audiencia(audiencia, current_user):
+        raise HTTPException(status_code=403, detail="Sin permiso para esta audiencia")
+
+    actualizados = 0
+    errores = 0
+
+    for decision in request.decisiones:
+        try:
+            # Buscar el segmento
+            res = await db.execute(
+                select(Segmento).where(
+                    Segmento.id == decision.segment_id,
+                    Segmento.audiencia_id == audiencia_id
+                )
+            )
+            segmento = res.scalar_one_or_none()
+
+            if not segmento:
+                errores += 1
+                continue
+                
+            # No procesamos si ya fue editado por el usuario
+            if segmento.editado_por_usuario:
+                errores += 1
+                continue
+
+            if decision.accion.lower() == "aceptar" and segmento.texto_batch:
+                segmento.texto_mejorado = segmento.texto_batch
+                segmento.texto_batch = None
+                actualizados += 1
+            elif decision.accion.lower() == "rechazar":
+                segmento.texto_batch = None
+                actualizados += 1
+            else:
+                errores += 1
+        except Exception as e:
+            logger.error(f"Error actualizando segmento {decision.segment_id}: {e}")
+            errores += 1
+
+    await db.commit()
+
+    return BatchUpdateResponse(
+        actualizados=actualizados,
+        errores=errores
+    )
 
 
 # ── Audio de la audiencia ────────────────────────────────
