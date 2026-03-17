@@ -2,7 +2,7 @@
 Pydantic schemas para Segmento.
 """
 import uuid
-from typing import Optional
+from typing import Optional, List, Any
 
 from pydantic import BaseModel
 
@@ -17,7 +17,7 @@ class SegmentoCreate(BaseModel):
     es_provisional: bool = False
     fuente: str = "streaming"
     orden: int
-    palabras_json: Optional[dict] = None
+    palabras_json: Optional[List[Any]] = None
 
 
 class SegmentoUpdate(BaseModel):
@@ -40,7 +40,7 @@ class SegmentoResponse(BaseModel):
     editado_por_usuario: bool
     fuente: str
     orden: int
-    palabras_json: Optional[dict]
+    palabras_json: Optional[List[Any]]
 
     model_config = {"from_attributes": True}
 
