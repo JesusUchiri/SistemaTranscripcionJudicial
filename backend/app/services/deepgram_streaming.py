@@ -63,15 +63,14 @@ class DeepgramStreamingService:
         keyterms_list = list(itertools.islice(self.keyterms, 100))
 
         try:
-            # Usar API V1 listen connect encapsulado en su proper async context
+            # El frontend envía audio/webm (MediaRecorder API).
+            # NO especificamos encoding/sample_rate para que Deepgram
+            # auto-detecte el formato desde las cabeceras del container WebM.
             self._connection_ctx = self._client.listen.v1.connect(
                 model=settings.DEEPGRAM_MODEL,
                 language="es-419",
                 smart_format="true",
                 diarize="true",
-                encoding="linear16",
-                sample_rate="16000",
-                channels="1",
                 interim_results="true",
                 utterance_end_ms="3500",
                 vad_events="true",
@@ -79,13 +78,6 @@ class DeepgramStreamingService:
                 numerals="true",
                 endpointing="500",
                 keyterm=keyterms_list,
-                request_options={"additional_query_parameters": {
-                    "filler_words": "false",
-                    "paragraphs": "true",
-                    "eot_threshold": "0.7",
-                    "eot_timeout_ms": "5000",
-                    "eager_eot_threshold": "0.3"
-                }}
             )
             self._connection = await self._connection_ctx.__aenter__()
 

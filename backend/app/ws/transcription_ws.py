@@ -11,7 +11,6 @@ import logging
 import os
 import uuid
 import urllib.parse
-import wave
 from datetime import datetime
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -91,14 +90,11 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
 
     logger.info(f"WebSocket connected for audiencia: {audiencia_id}")
 
-    # Audio recording setup
+    # Audio recording setup — guarda WebM tal como lo envía el navegador
     audio_dir = settings.AUDIO_STORAGE_PATH
     os.makedirs(audio_dir, exist_ok=True)
-    audio_path = os.path.join(audio_dir, f"{audiencia_id}.wav")
-    wav_file = wave.open(audio_path, "wb")
-    wav_file.setnchannels(1)
-    wav_file.setsampwidth(2)  # 16-bit
-    wav_file.setframerate(16000)
+    audio_path = os.path.join(audio_dir, f"{audiencia_id}.webm")
+    audio_file = open(audio_path, "wb")
 
     segment_counter = 0
     enhancement_service = get_enhancement_service()
@@ -477,7 +473,7 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
                         logger.warning("audio_chunk sin campo 'data'")
                         continue
                     audio_bytes = base64.b64decode(payload)
-                    wav_file.writeframes(audio_bytes)
+                    audio_file.write(audio_bytes)
                     await dg_service.send_audio(audio_bytes)
                 except Exception as e:
                     logger.warning(f"Error procesando audio_chunk: {e}")
@@ -501,9 +497,9 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
     finally:
         # Cleanup
         await dg_service.close()
-        wav_file.close()
+        audio_file.close()
 
-        # Guardar sesión: audio_path, duración y estado "transcrita"
+        # Guardar sesión: audio_path y estado "transcrita"
         try:
             aid = uuid.UUID(audiencia_id)
             async with async_session() as db:
@@ -514,13 +510,6 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
                 if audiencia:
                     if os.path.exists(audio_path):
                         audiencia.audio_path = audio_path
-                        try:
-                            with wave.open(audio_path, "rb") as wf:
-                                frames = wf.getnframes()
-                                rate = wf.getframerate()
-                                audiencia.audio_duration_seconds = frames / float(rate)
-                        except Exception:
-                            pass
                     audiencia.estado = "transcrita"
                     await db.commit()
                     logger.info(f"Sesión guardada: audiencia {audiencia_id} → transcrita (audio: {audio_path})")
