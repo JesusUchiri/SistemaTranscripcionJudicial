@@ -48,6 +48,7 @@ export function useDeepgramSocket(audienciaId: string) {
 
         ws.onmessage = (event) => {
             try {
+                console.log('WS msg from backend:', event.data.substring(0, 120))
                 const data = JSON.parse(event.data)
 
                 switch (data.type) {
