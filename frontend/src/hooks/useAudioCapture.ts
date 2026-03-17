@@ -78,31 +78,21 @@ export function useAudioCapture({
 
                 recorder.ondataavailable = (e) => {
                     if (e.data.size > 0) {
-                        chunksRef.current.push(e.data)
+                        // Convert blob to base64 immediately when data is available
+                        const reader = new FileReader()
+                        reader.onloadend = () => {
+                            const base64 = reader.result as string
+                            const base64Data = base64.split(',')[1] || base64
+
+                            sequenceRef.current++
+                            onAudioChunk(base64Data, sequenceRef.current)
+                        }
+                        reader.readAsDataURL(e.data)
                     }
                 }
 
-                recorder.start()
-
-                // Send buffered chunks every chunkIntervalMs
-                timerRef.current = setInterval(() => {
-                    if (chunksRef.current.length === 0) return
-
-                    // Combine all chunks into one blob
-                    const blob = new Blob(chunksRef.current, { type: recorder.mimeType })
-                    chunksRef.current = []
-
-                    // Convert blob to base64
-                    const reader = new FileReader()
-                    reader.onloadend = () => {
-                        const base64 = reader.result as string
-                        const base64Data = base64.split(',')[1] || base64
-
-                        sequenceRef.current++
-                        onAudioChunk(base64Data, sequenceRef.current)
-                    }
-                    reader.readAsDataURL(blob)
-                }, chunkIntervalMs)
+                // Start recording with timeslice — ondataavailable fires every chunkIntervalMs
+                recorder.start(chunkIntervalMs)
 
                 setIsCapturing(true)
             } catch (err: any) {
