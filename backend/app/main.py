@@ -25,9 +25,13 @@ from app.services.auth_service import hash_password
 from app.ws.transcription_ws import transcription_websocket
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+# Silenciar loggers muy verbosos
+logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+logging.getLogger("websockets").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -106,7 +110,7 @@ async def auto_seed_database():
                         instancia="Demo",
                         fecha=date.today(),
                         hora_inicio=time(9, 0),
-                        created_by=admin.id
+                        created_by=digitador.id
                     )
                     db.add(demo_audiencia)
 
@@ -120,10 +124,10 @@ async def auto_seed_database():
                 resultado_demo = await db.execute(select(Audiencia).where(Audiencia.id == "00000000-0000-0000-0000-000000000000"))
                 demo_existe = resultado_demo.scalar_one_or_none()
                 if not demo_existe:
-                    # fetch admin to assign to
-                    res_admin_fetch = await db.execute(select(Usuario).where(Usuario.rol == 'admin').limit(1))
-                    admin_fetched = res_admin_fetch.scalar_one_or_none()
-                    if admin_fetched:
+                    # fetch transcriptor to assign to, so the digitador can access the WS
+                    res_user_fetch = await db.execute(select(Usuario).where(Usuario.rol == 'transcriptor').limit(1))
+                    user_fetched = res_user_fetch.scalar_one_or_none()
+                    if user_fetched:
                         demo_audiencia = Audiencia(
                             id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
                             expediente="DEMO-00001",
@@ -132,7 +136,7 @@ async def auto_seed_database():
                             instancia="Demo",
                             fecha=date.today(),
                             hora_inicio=time(9, 0),
-                            created_by=admin_fetched.id
+                            created_by=user_fetched.id
                         )
                         db.add(demo_audiencia)
                         await db.commit()

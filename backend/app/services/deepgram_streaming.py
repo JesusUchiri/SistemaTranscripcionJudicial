@@ -104,13 +104,23 @@ class DeepgramStreamingService:
         if not message:
             return
 
-        # Pydantic Objects in SDK V6 have model_dump/dict based approaches, but they can be passed differently 
-        data_dict = message.model_dump() if hasattr(message, "model_dump") else message.to_dict() if hasattr(message, "to_dict") else message if isinstance(message, dict) else message.__dict__ if hasattr(message, '__dict__') else None
-        
-        if data_dict is None:
+        logger.debug(f"Deepgram message received: {type(message).__name__}")
+
+        # Pydantic Objects en SDK v6
+        if hasattr(message, "model_dump"):
+            data_dict = message.model_dump()
+        elif hasattr(message, "to_dict"):
+            data_dict = message.to_dict()
+        elif isinstance(message, dict):
+            data_dict = message
+        elif hasattr(message, "__dict__"):
+            data_dict = message.__dict__
+        else:
+            logger.warning(f"Deepgram message unknown type: {type(message)}")
             return
-            
+
         msg_type = data_dict.get("type", "")
+        logger.debug(f"Deepgram msg type: '{msg_type}', keys: {list(data_dict.keys())}")
 
         if msg_type == "Results" or data_dict.get("channel"):
             await self._handle_results(data_dict)
