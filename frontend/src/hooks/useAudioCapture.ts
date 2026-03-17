@@ -74,9 +74,9 @@ export function useAudioCapture({
                 } else if (source === 'microphone') {
                     stream = await navigator.mediaDevices.getUserMedia({
                         audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true,
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false,
                             sampleRate,
                         },
                     })
@@ -125,7 +125,11 @@ export function useAudioCapture({
 
                         const base64 = float32ToInt16Base64(merged)
                         sequenceRef.current++
-                        console.log('PCM chunk seq', sequenceRef.current, '—', merged.length, 'samples,', base64.length, 'chars')
+                        // Log RMS to detect silence vs voice
+                        let sumSq = 0
+                        for (let k = 0; k < merged.length; k++) sumSq += merged[k] * merged[k]
+                        const rms = Math.sqrt(sumSq / merged.length)
+                        console.log('PCM chunk seq', sequenceRef.current, '— RMS:', rms.toFixed(4), base64.length, 'chars')
                         onAudioChunk(base64, sequenceRef.current)
                     }
                 }

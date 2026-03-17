@@ -1,35 +1,25 @@
 """
-Servicio de streaming con Deepgram Nova-3.
-Mantiene una conexión WebSocket persistente con Deepgram por cada audiencia activa.
-
-Diarización: diarize=true identifica distintas voces (SPEAKER_00, SPEAKER_01, ...).
-Nova-3 soporta diarización en streaming; cada palabra trae speaker (int).
+Servicio de streaming con Deepgram Nova-2.
+Usa el SDK v6 (deepgram-sdk==6.0.1) con nuestro propio loop de escucha.
 """
 import asyncio
+import json
 import logging
 from collections import Counter
 from typing import Callable, Optional, List, Dict, Any, Awaitable
-import itertools
 
 from deepgram import AsyncDeepgramClient
 from deepgram.core.events import EventType
 
 from app.config import settings
-from app.data.legal_keyterms import get_keyterms
 
 logger = logging.getLogger(__name__)
 
 
 class DeepgramStreamingService:
     """
-    Manages a persistent WebSocket connection to Deepgram Nova-3 using the official SDK.
-
-    Responsabilidades:
-    - Conexión/desconexión con Deepgram
-    - Envío de audio chunks
-    - Recepción de resultados y paso al callback
-
-    NO hace buffering ni mejoramiento - eso lo maneja transcription_ws.py
+    Manages a persistent WebSocket connection to Deepgram Nova-2 using the official SDK.
+    Uses recv() directly instead of start_listening() for reliable message handling.
     """
 
     def __init__(
@@ -42,7 +32,6 @@ class DeepgramStreamingService:
         self.on_transcript = on_transcript
         self.on_utterance_end = on_utterance_end
         self.on_speech_started = on_speech_started
-        self.keyterms: List[str] = keyterms if keyterms is not None else get_keyterms(100)
 
         self._client: AsyncDeepgramClient = AsyncDeepgramClient(api_key=settings.DEEPGRAM_API_KEY)
         self._connection_ctx: Any = None
@@ -60,9 +49,7 @@ class DeepgramStreamingService:
 
     async def connect(self) -> None:
         """Establish async connection to Deepgram using the Python SDK."""
-
         try:
-            # El frontend envía PCM linear16 @ 16kHz (AudioContext + ScriptProcessorNode)
             self._connection_ctx = self._client.listen.v1.connect(
                 model="nova-2",
                 language="es",
@@ -77,64 +64,74 @@ class DeepgramStreamingService:
                 numerals="true",
             )
             self._connection = await self._connection_ctx.__aenter__()
-
-            # Mapping SDK events to our internal methods
-            self._connection.on(EventType.MESSAGE, self._on_message)
-            self._connection.on(EventType.CLOSE, self._on_close)
-            self._connection.on(EventType.ERROR, self._on_error)
-
-            # Initiate background receive loop from SDK with error handling
-            listen_task = asyncio.create_task(self._connection.start_listening())
-            # Store task reference to detect early failures
-            self._listen_task = listen_task
-
             self._running = True
-            logger.info(f"Connected to Deepgram with model: {settings.DEEPGRAM_MODEL}")
+
+            # Nuestro propio loop de escucha con manejo de errores completo
+            self._listen_task = asyncio.create_task(self._listen_loop())
+            self._listen_task.add_done_callback(self._on_listen_task_done)
+
+            logger.info("Connected to Deepgram with model: nova-2")
 
         except Exception as e:
-            logger.error(f"Failed to connect to Deepgram via SDK: {e}", exc_info=True)
+            logger.error(f"Failed to connect to Deepgram: {e}", exc_info=True)
             raise
 
-    # Callbacks del SDK
-    async def _on_message(self, message: Any) -> None:
-        """Handles MESSAGE event from SDK."""
-        if not message:
-            return
-
-        logger.debug(f"Deepgram message received: {type(message).__name__}")
-
-        # Pydantic Objects en SDK v6
-        if hasattr(message, "model_dump"):
-            data_dict = message.model_dump()
-        elif hasattr(message, "to_dict"):
-            data_dict = message.to_dict()
-        elif isinstance(message, dict):
-            data_dict = message
-        elif hasattr(message, "__dict__"):
-            data_dict = message.__dict__
+    def _on_listen_task_done(self, task: asyncio.Task) -> None:
+        """Called when the listen loop task finishes."""
+        if task.cancelled():
+            logger.info("Deepgram listen task cancelled")
+        elif task.exception():
+            logger.error(f"Deepgram listen task failed: {task.exception()}", exc_info=task.exception())
         else:
-            logger.warning(f"Deepgram message unknown type: {type(message)}")
-            return
+            logger.info("Deepgram listen task completed normally")
+        self._running = False
 
-        msg_type = data_dict.get("type", "")
-        logger.debug(f"Deepgram msg type: '{msg_type}', keys: {list(data_dict.keys())}")
+    async def _listen_loop(self) -> None:
+        """
+        Our own listening loop — reads raw messages directly from the WebSocket.
+        This avoids depending on SDK's start_listening() / construct_type() which can fail silently.
+        """
+        logger.info("[DG] Listen loop started")
+        try:
+            # Access the underlying websockets protocol directly
+            ws = self._connection._websocket
+            async for raw_message in ws:
+                if not self._running:
+                    break
+                try:
+                    if isinstance(raw_message, bytes):
+                        # Binary message — skip
+                        continue
+                    data = json.loads(raw_message)
+                    await self._dispatch(data)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"[DG] JSON decode error: {e}, raw: {raw_message[:100]}")
+                except Exception as e:
+                    logger.error(f"[DG] Error processing message: {e}", exc_info=True)
+                    # Continue — don't let one bad message kill the loop
+        except Exception as e:
+            logger.error(f"[DG] Listen loop error: {e}", exc_info=True)
+        finally:
+            self._running = False
+            logger.info("[DG] Listen loop ended")
 
-        if msg_type == "Results" or data_dict.get("channel"):
-            await self._handle_results(data_dict)
+    async def _dispatch(self, data: dict) -> None:
+        """Route incoming Deepgram messages to the right handler."""
+        msg_type = data.get("type", "")
+        logger.debug(f"[DG] Received message type='{msg_type}'")
+
+        if msg_type == "Results":
+            await self._handle_results(data)
         elif msg_type == "UtteranceEnd":
             if self.on_utterance_end:
                 await self.on_utterance_end({"type": "UtteranceEnd"})
         elif msg_type == "SpeechStarted":
             if self.on_speech_started:
                 await self.on_speech_started({"type": "SpeechStarted"})
-        
-
-    async def _on_close(self, *args, **kwargs) -> None:
-        logger.info(f"Deepgram connection closed via SDK event. args={args}, kwargs={kwargs}")
-        self._running = False
-
-    async def _on_error(self, error: Any) -> None:
-        logger.error(f"Deepgram SDK Error: {error!r}", exc_info=True)
+        elif msg_type == "Metadata":
+            logger.info(f"[DG] Metadata received: {data}")
+        else:
+            logger.debug(f"[DG] Unknown message type: '{msg_type}', data: {str(data)[:200]}")
 
     async def send_audio(self, audio_data: bytes) -> None:
         """Send raw PCM audio chunk to Deepgram SDK."""
@@ -142,12 +139,10 @@ class DeepgramStreamingService:
             try:
                 await self._connection.send_media(audio_data)
             except Exception as e:
-                logger.error(f"Error sending audio to Deepgram SDK: {e}")
+                logger.error(f"Error sending audio to Deepgram: {e}")
 
     async def _handle_results(self, data: dict) -> None:
-        """
-        Parse Deepgram results and pass to callback.
-        """
+        """Parse Deepgram Results and call the transcript callback."""
         channel = data.get("channel", {})
         alternatives_list = channel.get("alternatives", [])
         if not alternatives_list:
@@ -156,39 +151,23 @@ class DeepgramStreamingService:
         best = alternatives_list[0]
         transcript = best.get("transcript", "").strip()
         is_final = data.get("is_final", False)
-        logger.info(f"[DIAG] Deepgram result: is_final={is_final}, transcript='{transcript[:60]}'")
+        logger.info(f"[DIAG] Deepgram result: is_final={is_final}, transcript='{transcript[:80]}'")
         if not transcript:
             return
-        words = best.get("words", [])
 
+        words = best.get("words", [])
         speaker = self._speaker_dominante(words)
 
-        processed_words = []
-        for w in words:
-            word_confidence = w.get("confidence", 1.0)
-            word_alternatives = []
-
-            if word_confidence < 0.85:
-                for alt_option in alternatives_list[1:4]:
-                    alt_words = alt_option.get("words", [])
-                    matching_word = None
-                    for aw in alt_words:
-                        if abs(aw.get("start", 0) - w.get("start", 0)) < 0.1:
-                            matching_word = aw
-                            break
-                    if matching_word and matching_word.get("word", "").lower() != w.get("word", "").lower():
-                        word_alternatives.append({
-                            "word": matching_word.get("word", ""),
-                            "confidence": matching_word.get("confidence", 0.0)
-                        })
-
-            processed_words.append({
+        processed_words = [
+            {
                 "word": w.get("word", ""),
                 "start": w.get("start", 0.0),
                 "end": w.get("end", 0.0),
-                "confidence": word_confidence,
-                "alternatives": word_alternatives,
-            })
+                "confidence": w.get("confidence", 1.0),
+                "alternatives": [],
+            }
+            for w in words
+        ]
 
         await self.on_transcript({
             "type": "transcript",
@@ -204,22 +183,30 @@ class DeepgramStreamingService:
     async def close(self) -> None:
         """Close the Deepgram connection via SDK."""
         self._running = False
+
+        if self._listen_task and not self._listen_task.done():
+            self._listen_task.cancel()
+            try:
+                await self._listen_task
+            except asyncio.CancelledError:
+                pass
+
         if self._connection:
             try:
                 await self._connection.send_close_stream()
-            except Exception as e:
+            except Exception:
                 pass
             self._connection = None
-            
+
         if self._connection_ctx:
             try:
                 await self._connection_ctx.__aexit__(None, None, None)
             except Exception:
                 pass
             self._connection_ctx = None
-        
+
         logger.info("Deepgram connection closed by client")
-    
+
     @property
     def is_connected(self) -> bool:
         return self._running and self._connection is not None
