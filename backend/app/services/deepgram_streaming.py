@@ -60,25 +60,21 @@ class DeepgramStreamingService:
 
     async def connect(self) -> None:
         """Establish async connection to Deepgram using the Python SDK."""
-        keyterms_list = list(itertools.islice(self.keyterms, 100))
 
         try:
             # El frontend envía PCM linear16 @ 16kHz (AudioContext + ScriptProcessorNode)
             self._connection_ctx = self._client.listen.v1.connect(
-                model=settings.DEEPGRAM_MODEL,
-                language="es-419",
-                smart_format="true",
-                diarize="true",
+                model="nova-2",
+                language="es",
                 encoding="linear16",
                 sample_rate="16000",
                 channels="1",
                 interim_results="true",
-                utterance_end_ms="3500",
-                vad_events="true",
                 punctuate="true",
+                diarize="true",
+                smart_format="true",
+                endpointing="300",
                 numerals="true",
-                endpointing="500",
-                keyterm=keyterms_list,
             )
             self._connection = await self._connection_ctx.__aenter__()
 
@@ -134,11 +130,11 @@ class DeepgramStreamingService:
         
 
     async def _on_close(self, *args, **kwargs) -> None:
-        logger.info("Deepgram connection closed via SDK event")
+        logger.info(f"Deepgram connection closed via SDK event. args={args}, kwargs={kwargs}")
         self._running = False
 
     async def _on_error(self, error: Any) -> None:
-        logger.error(f"Deepgram SDK Error: {error}")
+        logger.error(f"Deepgram SDK Error: {error!r}", exc_info=True)
 
     async def send_audio(self, audio_data: bytes) -> None:
         """Send raw PCM audio chunk to Deepgram SDK."""
@@ -159,10 +155,10 @@ class DeepgramStreamingService:
 
         best = alternatives_list[0]
         transcript = best.get("transcript", "").strip()
+        is_final = data.get("is_final", False)
+        logger.info(f"[DIAG] Deepgram result: is_final={is_final}, transcript='{transcript[:60]}'")
         if not transcript:
             return
-
-        is_final = data.get("is_final", False)
         words = best.get("words", [])
 
         speaker = self._speaker_dominante(words)
