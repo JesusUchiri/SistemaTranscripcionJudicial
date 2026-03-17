@@ -473,8 +473,13 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
                         logger.warning("audio_chunk sin campo 'data'")
                         continue
                     audio_bytes = base64.b64decode(payload)
+                    seq = data.get("sequence", 0)
+                    logger.debug(f"audio_chunk recibido: seq={seq}, bytes={len(audio_bytes)}")
                     audio_file.write(audio_bytes)
                     await dg_service.send_audio(audio_bytes)
+                    # Echo de diagnóstico: confirma al frontend que el backend recibió el chunk
+                    if seq <= 3:
+                        await websocket.send_json({"type": "debug", "msg": f"backend recibio seq={seq}, bytes={len(audio_bytes)}, dg_running={dg_service.is_connected}"})
                 except Exception as e:
                     logger.warning(f"Error procesando audio_chunk: {e}")
                     continue
