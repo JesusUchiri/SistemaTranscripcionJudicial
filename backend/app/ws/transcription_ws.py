@@ -414,7 +414,17 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
 
     try:
         # Connect to Deepgram
-        await dg_service.connect()
+        try:
+            await dg_service.connect()
+            logger.info(f"✅ Deepgram connection successful for audiencia: {audiencia_id}")
+        except Exception as dg_err:
+            logger.error(f"❌ Deepgram connection failed: {dg_err}", exc_info=True)
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Error conectando a Deepgram: {str(dg_err)}",
+            })
+            await websocket.close(code=4500, reason="Deepgram connection failed")
+            return
 
         # Update audiencia status (skip if demo/non-existent)
         try:

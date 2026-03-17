@@ -16,8 +16,11 @@ from sqlalchemy import select, func
 from app.api.router import router as api_router
 from app.config import settings
 from app.database import engine, async_session, Base
-from app.models.usuario import Usuario
 from app.models.frase_estandar import FraseEstandar
+from app.models.audiencia import Audiencia
+from app.models.usuario import Usuario
+import uuid
+from datetime import date, time
 from app.services.auth_service import hash_password
 from app.ws.transcription_ws import transcription_websocket
 
@@ -93,11 +96,47 @@ async def auto_seed_database():
                         db.add(frase)
                     logger.info(f"   ✅ {len(FRASES_SISTEMA)} frases estándar creadas")
 
+                    # Crear Audiencia Demo para pruebas de UI (transcribir/00000...)
+                    
+                    demo_audiencia = Audiencia(
+                        id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+                        expediente="DEMO-00001",
+                        juzgado="Juzgado Penal Test",
+                        tipo_audiencia="Audiencia de Prueba",
+                        instancia="Demo",
+                        fecha=date.today(),
+                        hora_inicio=time(9, 0),
+                        created_by=admin.id
+                    )
+                    db.add(demo_audiencia)
+
                     await db.commit()
                     logger.info("🎉 Seed automático completado. Sistema listo.")
                     logger.info("   📧 Login: digitador@judiscribe.pe / Digitador2024!")
                 else:
                     logger.info(f"✅ Base de datos ya poblada ({total_usuarios} usuarios)")
+
+                # Validar la existencia de la audiencia Demo (en caso que no este)
+                resultado_demo = await db.execute(select(Audiencia).where(Audiencia.id == "00000000-0000-0000-0000-000000000000"))
+                demo_existe = resultado_demo.scalar_one_or_none()
+                if not demo_existe:
+                    # fetch admin to assign to
+                    res_admin_fetch = await db.execute(select(Usuario).where(Usuario.rol == 'admin').limit(1))
+                    admin_fetched = res_admin_fetch.scalar_one_or_none()
+                    if admin_fetched:
+                        demo_audiencia = Audiencia(
+                            id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+                            expediente="DEMO-00001",
+                            juzgado="Juzgado Penal Test",
+                            tipo_audiencia="Audiencia de Prueba",
+                            instancia="Demo",
+                            fecha=date.today(),
+                            hora_inicio=time(9, 0),
+                            created_by=admin_fetched.id
+                        )
+                        db.add(demo_audiencia)
+                        await db.commit()
+                        logger.info("   ✅ Audiencia DEMO conectada para pruebas.")
 
             return  # Éxito
 
@@ -121,10 +160,18 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 JudiScribe backend starting...")
     logger.info(f"   Environment: {settings.ENVIRONMENT}")
     logger.info(f"   CORS origins: {settings.cors_origins_list}")
-    
+
+    # Validate critical config
+    if not settings.DEEPGRAM_API_KEY or settings.DEEPGRAM_API_KEY == "":
+        logger.error("❌ DEEPGRAM_API_KEY is not configured - WebSocket audio transcription will fail")
+        logger.error("   Please set DEEPGRAM_API_KEY in environment variables")
+    else:
+        logger.info(f"✅ DEEPGRAM_API_KEY configured (length: {len(settings.DEEPGRAM_API_KEY)} chars)")
+    logger.info(f"   DEEPGRAM_MODEL: {settings.DEEPGRAM_MODEL}")
+
     # Seed automático de la base de datos
     await auto_seed_database()
-    
+
     yield
     logger.info("🛑 JudiScribe backend shutting down...")
     await engine.dispose()

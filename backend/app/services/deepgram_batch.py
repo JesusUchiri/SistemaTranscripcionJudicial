@@ -32,7 +32,7 @@ class DeepgramBatchService:
     def __init__(self, keyterms: Optional[List[str]] = None):
         self.keyterms: List[str] = keyterms if keyterms is not None else get_keyterms(100)
         self.api_key: str = settings.DEEPGRAM_API_KEY
-        self.client = AsyncDeepgramClient(self.api_key)
+        self.client = AsyncDeepgramClient(api_key=self.api_key)
 
     @staticmethod
     def _speaker_dominante(words: list) -> str:

@@ -43,10 +43,12 @@ class DeepgramStreamingService:
         self.on_utterance_end = on_utterance_end
         self.on_speech_started = on_speech_started
         self.keyterms: List[str] = keyterms if keyterms is not None else get_keyterms(100)
-        
-        self._client: AsyncDeepgramClient = AsyncDeepgramClient(settings.DEEPGRAM_API_KEY)
+
+        self._client: AsyncDeepgramClient = AsyncDeepgramClient(api_key=settings.DEEPGRAM_API_KEY)
+        self._connection_ctx: Any = None
         self._connection: Any = None
         self._running: bool = False
+        self._listen_task: Any = None
 
     @staticmethod
     def _speaker_dominante(words: list) -> str:
@@ -59,10 +61,10 @@ class DeepgramStreamingService:
     async def connect(self) -> None:
         """Establish async connection to Deepgram using the Python SDK."""
         keyterms_list = list(itertools.islice(self.keyterms, 100))
-        
+
         try:
-            # Usar API V1 listen connect
-            self._connection = await self._client.listen.v1.connect(
+            # Usar API V1 listen connect encapsulado en su proper async context
+            self._connection_ctx = self._client.listen.v1.connect(
                 model=settings.DEEPGRAM_MODEL,
                 language="es-419",
                 smart_format="true",
@@ -75,28 +77,33 @@ class DeepgramStreamingService:
                 vad_events="true",
                 punctuate="true",
                 numerals="true",
-                filler_words="false",
                 endpointing="500",
-                paragraphs="true",
-                eot_threshold="0.7",                 
-                eot_timeout_ms="5000",               
-                eager_eot_threshold="0.3",
-                keyterm=keyterms_list
-            ).__anext__() # Connect is an AsyncIterator so we must call __anext__ to get the websocket client
+                keyterm=keyterms_list,
+                request_options={"additional_query_parameters": {
+                    "filler_words": "false",
+                    "paragraphs": "true",
+                    "eot_threshold": "0.7",
+                    "eot_timeout_ms": "5000",
+                    "eager_eot_threshold": "0.3"
+                }}
+            )
+            self._connection = await self._connection_ctx.__aenter__()
 
             # Mapping SDK events to our internal methods
             self._connection.on(EventType.MESSAGE, self._on_message)
             self._connection.on(EventType.CLOSE, self._on_close)
             self._connection.on(EventType.ERROR, self._on_error)
-            
-            # Initiate background receive loop from SDK
-            asyncio.create_task(self._connection.start_listening())
-            
+
+            # Initiate background receive loop from SDK with error handling
+            listen_task = asyncio.create_task(self._connection.start_listening())
+            # Store task reference to detect early failures
+            self._listen_task = listen_task
+
             self._running = True
-            logger.info("Connected to Deepgram Nova-3 via SDK")
-            
+            logger.info(f"Connected to Deepgram with model: {settings.DEEPGRAM_MODEL}")
+
         except Exception as e:
-            logger.error(f"Failed to connect to Deepgram via SDK: {e}")
+            logger.error(f"Failed to connect to Deepgram via SDK: {e}", exc_info=True)
             raise
 
     # Callbacks del SDK
@@ -204,6 +211,13 @@ class DeepgramStreamingService:
             except Exception as e:
                 pass
             self._connection = None
+            
+        if self._connection_ctx:
+            try:
+                await self._connection_ctx.__aexit__(None, None, None)
+            except Exception:
+                pass
+            self._connection_ctx = None
         
         logger.info("Deepgram connection closed by client")
     
