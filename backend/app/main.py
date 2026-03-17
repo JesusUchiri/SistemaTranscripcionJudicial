@@ -44,56 +44,75 @@ FRASES_SISTEMA = [
 
 
 async def auto_seed_database():
-    """Puebla automáticamente la base de datos si está vacía."""
-    try:
-        # Crear tablas si no existen
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        
-        async with async_session() as db:
-            # Verificar si hay usuarios
-            resultado = await db.execute(select(func.count(Usuario.id)))
-            total_usuarios = resultado.scalar()
-            
-            if total_usuarios == 0:
-                logger.info("📦 Base de datos vacía. Iniciando seed automático...")
-                
-                # Crear usuario admin
-                admin = Usuario(
-                    email="admin@judiscribe.pe",
-                    nombre="Administrador del Sistema",
-                    password_hash=hash_password("JudiScribe2024!"),
-                    rol="admin",
-                    activo=True,
-                )
-                db.add(admin)
-                logger.info("   ✅ Usuario admin creado")
-                
-                # Crear usuario digitador
-                digitador = Usuario(
-                    email="digitador@judiscribe.pe",
-                    nombre="Digitador de Audiencias",
-                    password_hash=hash_password("Digitador2024!"),
-                    rol="transcriptor",
-                    activo=True,
-                )
-                db.add(digitador)
-                logger.info("   ✅ Usuario digitador creado")
-                
-                # Crear frases estándar
-                for frase_data in FRASES_SISTEMA:
-                    frase = FraseEstandar(**frase_data)
-                    db.add(frase)
-                logger.info(f"   ✅ {len(FRASES_SISTEMA)} frases estándar creadas")
-                
-                await db.commit()
-                logger.info("🎉 Seed automático completado. Sistema listo.")
-                logger.info("   📧 Login: digitador@judiscribe.pe / Digitador2024!")
-            else:
-                logger.info(f"✅ Base de datos ya poblada ({total_usuarios} usuarios)")
-                
-    except Exception as e:
-        logger.error(f"❌ Error en seed automático: {e}")
+    """Puebla automáticamente la base de datos si está vacía. Manejo robusto de errores."""
+    max_retries = 3
+    retry_count = 0
+
+    while retry_count < max_retries:
+        try:
+            logger.info(f"🔄 Intentando inicializar BD (intento {retry_count + 1}/{max_retries})...")
+
+            # Crear tablas si no existen
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("✅ Tablas creadas/verificadas")
+
+            async with async_session() as db:
+                # Verificar si hay usuarios
+                resultado = await db.execute(select(func.count(Usuario.id)))
+                total_usuarios = resultado.scalar()
+
+                if total_usuarios == 0:
+                    logger.info("📦 Base de datos vacía. Iniciando seed automático...")
+
+                    # Crear usuario admin
+                    admin = Usuario(
+                        email="admin@judiscribe.pe",
+                        nombre="Administrador del Sistema",
+                        password_hash=hash_password("JudiScribe2024!"),
+                        rol="admin",
+                        activo=True,
+                    )
+                    db.add(admin)
+                    logger.info("   ✅ Usuario admin creado")
+
+                    # Crear usuario digitador
+                    digitador = Usuario(
+                        email="digitador@judiscribe.pe",
+                        nombre="Digitador de Audiencias",
+                        password_hash=hash_password("Digitador2024!"),
+                        rol="transcriptor",
+                        activo=True,
+                    )
+                    db.add(digitador)
+                    logger.info("   ✅ Usuario digitador creado")
+
+                    # Crear frases estándar
+                    for frase_data in FRASES_SISTEMA:
+                        frase = FraseEstandar(**frase_data)
+                        db.add(frase)
+                    logger.info(f"   ✅ {len(FRASES_SISTEMA)} frases estándar creadas")
+
+                    await db.commit()
+                    logger.info("🎉 Seed automático completado. Sistema listo.")
+                    logger.info("   📧 Login: digitador@judiscribe.pe / Digitador2024!")
+                else:
+                    logger.info(f"✅ Base de datos ya poblada ({total_usuarios} usuarios)")
+
+            return  # Éxito
+
+        except Exception as e:
+            retry_count += 1
+            logger.error(f"⚠️ Error en seed automático (intento {retry_count}/{max_retries}): {type(e).__name__}: {e}")
+
+            if retry_count >= max_retries:
+                logger.warning(f"❌ No se pudo inicializar BD después de {max_retries} intentos. Continuando sin seed...")
+                logger.warning("   ⚠️ El sistema puede no funcionar correctamente sin datos iniciales.")
+                return
+
+            # Esperar antes de reintentar
+            import asyncio
+            await asyncio.sleep(2 ** retry_count)  # Exponential backoff: 2s, 4s, 8s
 
 
 @asynccontextmanager

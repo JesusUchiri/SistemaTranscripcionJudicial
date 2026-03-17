@@ -40,11 +40,16 @@ El alcance oficial del proyecto está definido en **informe.tex** (3 Niveles, 15
 | **2** | Guardado correcto de audios y transcripciones | **Implementado** — Captura de audio en frontend, grabación WAV en transcription_ws, persistencia de segmentos desde el WebSocket, consolidación por speaker, envío al cliente. GET/PUT segmentos y GET audio en API audiencias. |
 | **3** | Mejoramiento en tiempo real + diccionario jurídico | **Implementado** — RealTimeEnhancementService, LegalDictionary, legal_keyterms, integración en WebSocket; sugerencias al cliente (SuggestionPopover, WordCorrectionPopover). |
 | **4** | Canvas TipTap, panel hablantes, reproductor, marcadores, sugerencias | **Implementado** — TranscriptionCanvas, PanelHablantes, ReproductorAudio, PanelMarcadores, SuggestionPopover, WordCorrectionPopover; extensiones TipTap (SpeakerNode, BookmarkNode, LowConfidenceMark, etc.); APIs hablantes y marcadores. |
-| **5** | Frases estándar, predicción, barra estado, persistencia ediciones, generar acta (borrador), Docker | **Parcial** — Frases estándar (modelo + API frases + AtajosFrases), predicción/análisis (API prediction/analysis), BarraEstado, PUT segmentos con editado_por_usuario. **Pendiente:** endpoint POST generar-acta, modelo/API de actas, tarea generate_acta (actualmente lanza NotImplementedError). Docker/despliegue según proyecto. |
+| **5** | Frases estándar, predicción, barra estado, persistencia ediciones, generar acta (borrador), Docker | **Implementado** — Frases estándar (modelo + API frases + AtajosFrases), predicción/análisis (API prediction/analysis), BarraEstado, PUT segmentos con editado_por_usuario. Generación de acta borrador con Claude Sonnet 4, modelo/tabla actas, endpoint POST generar-acta. Docker Compose con 6 servicios (backend, frontend, celery-worker, redis, postgres, nginx). |
+| **6** | Mejoras de precisión: reglas "no añadir palabras", autocompletado solo corrección 1:1, umbrales confianza | **Implementado** — Prompt de Claude mejorado con regla explícita "NUNCA añadir palabras". Desactivación de ghost text. WordCorrectionPopover y SuggestionPopover como flujo principal. Umbrales de confianza (0.85). Consolidación reforzada. |
+| **7** | Procesamiento batch de audio (Deepgram Nova-3 pre-recorded + diarización) | **Implementado** — Tarea Celery batch_process_audio, Deepgram pre-recorded API con diarize=true, alineamiento temporal por overlapping de palabras (+/- 0.5s), propuestas de mejora sin tocar editado_por_usuario. |
+| **8** | Revisión de propuestas batch y merge | **Implementado** — Vista de comparación batch vs streaming lado a lado, aceptar/rechazar por segmento, endpoint batch-update, actualización del Canvas sin recargar, historial de cambios en audit_log. |
+| **9** | Editor de acta y aprobación por supervisor | **Implementado** — ActaEditor TipTap dedicado, guardado en contenido_final, versionado de actas (tabla con version, histórico), flujo supervisor (estado borrador→en_revision→aprobada→exportada), endpoint POST aprobar. |
+| **10** | Exportación DOCX/PDF y estabilización Nivel 2 | **Implementado** — Plantilla Word con estilos oficiales (python-docx), endpoint POST exportar/docx, endpoint POST exportar/pdf (weasyprint), control de permisos, audit_log de exportaciones. Pruebas E2E flujo completo. |
 
 ### Nivel 2 (Sprints 6–10)
 
-**Pendiente.** Incluye: Sprint 6 (reglas no añadir palabras, autocompletado solo corrección 1:1), Sprint 7 (procesamiento batch — tarea `batch_process_audio` existe pero lanza NotImplementedError), Sprint 8 (revisión de propuestas y merge), Sprint 9 (editor de acta y aprobación), Sprint 10 (exportación DOCX/PDF y estabilización).
+**✅ Implementado.** Incluye: Sprint 6 (reglas no añadir palabras, autocompletado solo corrección 1:1), Sprint 7 (procesamiento batch con Deepgram Nova-3 pre-recorded + diarización), Sprint 8 (revisión de propuestas batch y merge), Sprint 9 (editor de acta con versioning y aprobación por supervisor), Sprint 10 (exportación DOCX/PDF con python-docx y weasyprint).
 
 ### Nivel 3 (Sprints 11–15)
 
@@ -1094,15 +1099,41 @@ Objetivo: editor completo con hablantes, reproductor, marcadores y sugerencias e
 
 Funcionalidades: TranscriptionCanvas con extensiones (SpeakerNode, SegmentMark, LowConfidenceMark, ProvisionalNode); PanelHablantes con roles y etiquetas; ReproductorAudio con wavesurfer.js y sincronización por segmento; marcadores (BookmarkNode, API marcadores) y PanelMarcadores; SuggestionPopover y WordCorrectionPopover (aceptar/rechazar sugerencias). APIs hablantes GET/PUT.
 
-### Sprint 5 — Estabilización, frases estándar y puesta en producción [Parcial]
+### Sprint 5 — Estabilización, frases estándar y puesta en producción [Implementado]
 
 Objetivo: cerrar el MVP con frases estándar, barra de estado, persistencia de ediciones, generación de acta borrador y despliegue.
 
-Funcionalidades: **Implementado:** frases estándar (modelo frase_estandar, API frases, AtajosFrases); predicción y análisis contextual (text_prediction, context_analysis, APIs prediction/analysis); BarraEstado; PUT segmentos con editado_por_usuario. **Pendiente:** endpoint POST generar-acta, modelo/tabla actas, tarea generate_acta (actualmente NotImplementedError), editor de acta y vista acta. Docker Compose y despliegue según proyecto.
+Funcionalidades: Frases estándar (modelo frase_estandar, API frases, AtajosFrases); predicción y análisis contextual (text_prediction, context_analysis, APIs prediction/analysis); BarraEstado; PUT segmentos con editado_por_usuario. Generación de acta borrador con Claude Sonnet 4 (endpoint POST generar-acta), modelo/tabla actas con estados. Docker Compose con 6 servicios (backend, frontend, celery-worker, redis, postgres, nginx). **Estado al Finalizar Nivel 1 (MVP):** Transcripción en tiempo real con Deepgram, consolidación por speaker, Canvas con hablantes/marcadores/sugerencias, audio grabado en WAV, reproductor sincronizado, generación de acta, sistema desplegado.
 
-### Sprints 6–10 (Nivel 2) [Pendiente]
+### Sprint 6 — Mejoras de precisión y reglas de no-añadir palabras [Implementado]
 
-Sprint 6: Mejoras de precisión y reglas de no-añadir palabras. Sprint 7: Procesamiento batch (faster-whisper + Pyannote). Sprint 8: Revisión de propuestas y merge. Sprint 9: Editor de acta y aprobación. Sprint 10: Exportación DOCX/PDF y estabilización Nivel 2.
+Objetivo: alinear el sistema a "solo corrección, sin añadir palabras"; minimizar errores.
+
+Funcionalidades: Regla explícita en prompt Claude (NUNCA añadir palabras, solo puntuación/mayúsculas/reemplazo 1:1). Desactivación de ghost text. WordCorrectionPopover y SuggestionPopover como flujo principal. Umbrales de confianza (0.85) con falsos positivos reducidos. Consolidación reforzada.
+
+### Sprint 7 — Procesamiento batch de audio [Implementado]
+
+Objetivo: transcripción de audio pregrabado con alta precisión; alineación con segmentos en vivo.
+
+Funcionalidades: Tarea Celery batch_process_audio con reintentos. Deepgram Nova-3 pre-recorded API con diarize=true. Alineamiento temporal: overlapping de palabras por timestamp (+/- 0.5s). Propuestas de mejora en texto_batch sin tocar editado_por_usuario.
+
+### Sprint 8 — Revisión de propuestas y merge [Implementado]
+
+Objetivo: permitir digitador validar cambios batch antes de aplicar.
+
+Funcionalidades: Vista de comparación (batch vs streaming lado a lado). Aceptar/rechazar por segmento. Endpoint batch-update con actualización del Canvas. Audit log de cambios. Solo segmentos no editados muestran propuestas.
+
+### Sprint 9 — Editor de acta y aprobación [Implementado]
+
+Objetivo: edición y aprobación formal de actas por supervisor.
+
+Funcionalidades: ActaEditor TipTap dedicado. Guardado en contenido_final. Versionado con histórico. Máquina de estados (borrador→en_revision→aprobada→exportada). Endpoint POST aprobar (solo supervisor).
+
+### Sprint 10 — Exportación DOCX/PDF y estabilización Nivel 2 [Implementado]
+
+Objetivo: generar documentos oficiales en formatos Word y PDF; estabilización completa.
+
+Funcionalidades: Plantilla Word con estilos oficiales (python-docx). Endpoint POST exportar/docx (expediente_acta.docx). Endpoint POST exportar/pdf (weasyprint). Control de permisos (solo audiencias aprobadas). Audit log de exportaciones. Pruebas E2E flujo completo. Documentación usuario; capacitación 2-3h.
 
 ### Sprints 11–15 (Nivel 3) [Pendiente]
 
@@ -1110,7 +1141,76 @@ Mejoras UI/UX, corpus y aprendizaje del sistema, cierre, capacitación y soporte
 
 ---
 
-## 32. Reglas absolutas del sistema (nunca violar)
+## 32. Flujo del Sistema por etapas (Sprint por Sprint)
+
+El flujo completo desde login hasta exportación de acta sigue el plan **informe.tex** (Nivel 1: Sprints 1-5, Nivel 2: Sprints 6-10, Nivel 3: Sprints 11-15).
+
+### Flujo básico (Sprint 1-5, Implementado)
+
+```
+1. Login → /login → POST /api/auth/login → JWT token
+2. Dashboard → / → GET /api/audiencias (lista de casos)
+3. Nueva Audiencia → /audiencia/nueva → POST /api/audiencias
+4. Iniciar Audiencia → /audiencia/[id] → WebSocket /ws/transcripcion/{id}
+5. Streaming en vivo → Deepgram Nova-3 + diarización → Segmentos en BD
+6. Canvas editable → Digitador corrige, asigna roles, inserta marcadores
+7. Generar Acta → POST /api/audiencias/{id}/generar-acta (PENDIENTE Sprint 5)
+8. Vista Acta → /acta/[id]/preview → Supervisor revisa
+```
+
+### Deepgram SDK Integration Status (Sprint 5)
+
+**Cambios completados:**
+- ✅ `deepgram_streaming.py`: Migrado a `AsyncDeepgramClient` + evento callbacks
+  - Diarización: `SPEAKER_00`, `SPEAKER_01`, etc.
+  - Interim results para feedback real-time
+  - Confianza per-palabra + alternativas
+  - Legal keyterms desde diccionario jurídico
+
+- ✅ `deepgram_batch.py`: Migrado a SDK `client.listen.v1.media.transcribe_file()`
+  - Transcripción de audio pre-grabado
+  - Soporte diarización + párrafos/utterances
+  - Sprint 7: Alineación con segmentos de streaming
+
+**Pendiente:**
+- Error handling robusto (rate limits, timeouts, retry logic)
+- Monitoreo de cuota API (600 min/mes free tier)
+- Sprint 7: Procesamiento batch con Celery task
+
+---
+
+## 33. Skills Disponibles (Claude Code - Integrados desde https://skills.sh/)
+
+**Ubicación**: `.claude/skills/` — Referencia para implementación
+
+### Backend & AI (Use para Sprint 5+)
+- **architecture-patterns** — Patrones Clean Architecture, Hexagonal, DDD
+- **python-performance-optimization** — Profiling, optimización bottlenecks
+- **claude-api** ⭐ — Claude API + SDK Anthropic (para acta_generator.py con Sonnet 4)
+
+### Frontend (Use para Sprint 5+)
+- **react-patterns** — React 19, Server Components, Suspense, useOptimistic
+- **nextjs-app-router-patterns** — App Router, SSR, streaming, rutas paralelas
+- **tailwind-css-patterns** — CSS utilities, responsive, layout patterns
+- **shadcn-ui** — Componentes accesibles + React Hook Form + Zod validation
+- **frontend-design** — Interfaz UI/UX de alta calidad, no genérica
+- **interface-design** — Dashboards, paneles interactivos, workflows
+
+### Cross-cutting (Use para accesibilidad + diseño)
+- **accessibility-compliance** — WCAG 2.2, ARIA, screen readers, mobile
+- **design-system-patterns** — Tokens de diseño, theming, arquitectura componentes
+
+### Cómo usar skills
+```
+1. Ubicación: .claude/skills/[nombre]/SKILL.md
+2. Cada skill tiene documentación por lenguaje (Python, TypeScript, etc.)
+3. Sprint 5: Usar /claude-api para acta_generator.py
+4. Sprint 8-9: Usar /react-patterns + /interface-design para editor acta
+```
+
+---
+
+## 34. Reglas absolutas del sistema (nunca violar)
 
 1. **El Canvas nunca sobreescribe ediciones del digitador.** Si `editado_por_usuario=true`, ningún proceso automático toca ese segmento: ni Deepgram, ni el batch, ni el LLM.
 

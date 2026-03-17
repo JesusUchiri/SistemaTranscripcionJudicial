@@ -6,12 +6,13 @@ Diarización: diarize=true identifica distintas voces (SPEAKER_00, SPEAKER_01, .
 Nova-3 soporta diarización en streaming; cada palabra trae speaker (int).
 """
 import asyncio
-import json
 import logging
 from collections import Counter
-from typing import Callable, Optional
+from typing import Callable, Optional, List, Dict, Any, Awaitable
+import itertools
 
-import websockets
+from deepgram import AsyncDeepgramClient
+from deepgram.core.events import EventType
 
 from app.config import settings
 from app.data.legal_keyterms import get_keyterms
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class DeepgramStreamingService:
     """
-    Manages a persistent WebSocket connection to Deepgram Nova-3.
+    Manages a persistent WebSocket connection to Deepgram Nova-3 using the official SDK.
 
     Responsabilidades:
     - Conexión/desconexión con Deepgram
@@ -33,53 +34,22 @@ class DeepgramStreamingService:
 
     def __init__(
         self,
-        on_transcript: Callable,
-        on_utterance_end: Optional[Callable] = None,
-        on_speech_started: Optional[Callable] = None,
-        keyterms: Optional[list[str]] = None,
+        on_transcript: Callable[[Dict[str, Any]], Awaitable[None]],
+        on_utterance_end: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        on_speech_started: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        keyterms: Optional[List[str]] = None,
     ):
         self.on_transcript = on_transcript
         self.on_utterance_end = on_utterance_end
         self.on_speech_started = on_speech_started
-        self.keyterms = keyterms or get_keyterms(100)
-        self._ws: Optional[websockets.WebSocketClientProtocol] = None
-        self._running = False
-        self._receive_task: Optional[asyncio.Task] = None
-
-    def _build_url(self) -> str:
-        """Build the Deepgram WebSocket URL with optimized params for legal transcription."""
-        base = "wss://api.deepgram.com/v1/listen"
-        # Deepgram Nova-3 + Spanish Latin America for best context understanding
-        params = [
-            f"model={settings.DEEPGRAM_MODEL}",  # Ensure this is 'nova-3' in .env
-            "language=es-419",                   # Latin American Spanish
-            "smart_format=true",                 # Dates, times, currency
-            "diarize=true",                      # Speaker identification
-            "encoding=linear16",
-            "sample_rate=16000",
-            "channels=1",
-            "interim_results=true",              # Essential for real-time feedback
-            "utterance_end_ms=3500",             # Increased pause tolerance (3.5s)
-            "vad_events=true",                   # Detect speech start/end events
-            "punctuate=true",                    # Auto-punctuation based on context
-            "numerals=true",                     # "Article 200" vs "two hundred"
-            "filler_words=false",                # Remove "eh", "um"
-            "endpointing=500",                   # 500ms silence triggers finalization check
-            "paragraphs=true",                   # Detect logical paragraph breaks
-        ]
-        # Add keyterms (up to 100)
-        for term in self.keyterms[:100]:
-            params.append(f"keyterms={term}")
-
-        return f"{base}?{'&'.join(params)}"
+        self.keyterms: List[str] = keyterms if keyterms is not None else get_keyterms(100)
+        
+        self._client: AsyncDeepgramClient = AsyncDeepgramClient(settings.DEEPGRAM_API_KEY)
+        self._connection: Any = None
+        self._running: bool = False
 
     @staticmethod
     def _speaker_dominante(words: list) -> str:
-        """
-        Obtiene el speaker más frecuente en la lista de palabras (diarización).
-        Deepgram devuelve speaker (int) por palabra; así evitamos etiquetar mal
-        un segmento cuando hay mezcla de voces en un mismo resultado.
-        """
         if not words:
             return "SPEAKER_00"
         speakers = [w.get("speaker", 0) for w in words]
@@ -87,59 +57,90 @@ class DeepgramStreamingService:
         return f"SPEAKER_{dominante:02d}"
 
     async def connect(self) -> None:
-        """Establish connection to Deepgram."""
-        url = self._build_url()
-        headers = {"Authorization": f"Token {settings.DEEPGRAM_API_KEY}"}
-
+        """Establish async connection to Deepgram using the Python SDK."""
+        keyterms_list = list(itertools.islice(self.keyterms, 100))
+        
         try:
-            self._ws = await websockets.connect(
-                url,
-                additional_headers=headers,
-                ping_interval=20,
-                ping_timeout=10,
-            )
+            # Usar API V1 listen connect
+            self._connection = await self._client.listen.v1.connect(
+                model=settings.DEEPGRAM_MODEL,
+                language="es-419",
+                smart_format="true",
+                diarize="true",
+                encoding="linear16",
+                sample_rate="16000",
+                channels="1",
+                interim_results="true",
+                utterance_end_ms="3500",
+                vad_events="true",
+                punctuate="true",
+                numerals="true",
+                filler_words="false",
+                endpointing="500",
+                paragraphs="true",
+                eot_threshold="0.7",                 
+                eot_timeout_ms="5000",               
+                eager_eot_threshold="0.3",
+                keyterm=keyterms_list
+            ).__anext__() # Connect is an AsyncIterator so we must call __anext__ to get the websocket client
+
+            # Mapping SDK events to our internal methods
+            self._connection.on(EventType.MESSAGE, self._on_message)
+            self._connection.on(EventType.CLOSE, self._on_close)
+            self._connection.on(EventType.ERROR, self._on_error)
+            
+            # Initiate background receive loop from SDK
+            asyncio.create_task(self._connection.start_listening())
+            
             self._running = True
-            self._receive_task = asyncio.create_task(self._receive_loop())
-            logger.info("Connected to Deepgram Nova-3")
+            logger.info("Connected to Deepgram Nova-3 via SDK")
+            
         except Exception as e:
-            logger.error(f"Failed to connect to Deepgram: {e}")
+            logger.error(f"Failed to connect to Deepgram via SDK: {e}")
             raise
 
+    # Callbacks del SDK
+    async def _on_message(self, message: Any) -> None:
+        """Handles MESSAGE event from SDK."""
+        if not message:
+            return
+
+        # Pydantic Objects in SDK V6 have model_dump/dict based approaches, but they can be passed differently 
+        data_dict = message.model_dump() if hasattr(message, "model_dump") else message.to_dict() if hasattr(message, "to_dict") else message if isinstance(message, dict) else message.__dict__ if hasattr(message, '__dict__') else None
+        
+        if data_dict is None:
+            return
+            
+        msg_type = data_dict.get("type", "")
+
+        if msg_type == "Results" or data_dict.get("channel"):
+            await self._handle_results(data_dict)
+        elif msg_type == "UtteranceEnd":
+            if self.on_utterance_end:
+                await self.on_utterance_end({"type": "UtteranceEnd"})
+        elif msg_type == "SpeechStarted":
+            if self.on_speech_started:
+                await self.on_speech_started({"type": "SpeechStarted"})
+        
+
+    async def _on_close(self, *args, **kwargs) -> None:
+        logger.info("Deepgram connection closed via SDK event")
+        self._running = False
+
+    async def _on_error(self, error: Any) -> None:
+        logger.error(f"Deepgram SDK Error: {error}")
+
     async def send_audio(self, audio_data: bytes) -> None:
-        """Send raw PCM audio chunk to Deepgram."""
-        if self._ws and self._running:
+        """Send raw PCM audio chunk to Deepgram SDK."""
+        if self._connection and self._running:
             try:
-                await self._ws.send(audio_data)
+                await self._connection.send_media(audio_data)
             except Exception as e:
-                logger.error(f"Error sending audio to Deepgram: {e}")
-
-    async def _receive_loop(self) -> None:
-        """Listen for transcription results from Deepgram."""
-        try:
-            async for message in self._ws:
-                data = json.loads(message)
-                msg_type = data.get("type", "")
-
-                if msg_type == "Results":
-                    await self._handle_results(data)
-                elif msg_type == "UtteranceEnd":
-                    if self.on_utterance_end:
-                        await self.on_utterance_end(data)
-                elif msg_type == "SpeechStarted":
-                    if self.on_speech_started:
-                        await self.on_speech_started(data)
-
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("Deepgram connection closed")
-        except Exception as e:
-            logger.error(f"Error in Deepgram receive loop: {e}")
-        finally:
-            self._running = False
+                logger.error(f"Error sending audio to Deepgram SDK: {e}")
 
     async def _handle_results(self, data: dict) -> None:
         """
         Parse Deepgram results and pass to callback.
-        No buffering here - transcription_ws.py handles semantic buffering.
         """
         channel = data.get("channel", {})
         alternatives_list = channel.get("alternatives", [])
@@ -154,27 +155,24 @@ class DeepgramStreamingService:
         is_final = data.get("is_final", False)
         words = best.get("words", [])
 
-        # Diarización: speaker por palabra (Deepgram devuelve speaker: 0, 1, 2...)
-        # Usamos el speaker dominante en el segmento por si hay palabras de distintos hablantes
         speaker = self._speaker_dominante(words)
 
-        # Build word list with alternatives for low-confidence words
         processed_words = []
         for w in words:
             word_confidence = w.get("confidence", 1.0)
             word_alternatives = []
 
-            # Extract alternatives for low-confidence words
             if word_confidence < 0.85:
                 for alt_option in alternatives_list[1:4]:
                     alt_words = alt_option.get("words", [])
-                    matching_word = next(
-                        (aw for aw in alt_words if abs(aw.get("start", 0) - w.get("start", 0)) < 0.1),
-                        None
-                    )
-                    if matching_word and matching_word["word"].lower() != w.get("word", "").lower():
+                    matching_word = None
+                    for aw in alt_words:
+                        if abs(aw.get("start", 0) - w.get("start", 0)) < 0.1:
+                            matching_word = aw
+                            break
+                    if matching_word and matching_word.get("word", "").lower() != w.get("word", "").lower():
                         word_alternatives.append({
-                            "word": matching_word["word"],
+                            "word": matching_word.get("word", ""),
                             "confidence": matching_word.get("confidence", 0.0)
                         })
 
@@ -186,39 +184,29 @@ class DeepgramStreamingService:
                 "alternatives": word_alternatives,
             })
 
-        # Pass result to callback - transcription_ws.py handles buffering
         await self.on_transcript({
             "type": "transcript",
             "is_final": is_final,
             "speaker": speaker,
             "text": transcript,
             "confidence": best.get("confidence", 1.0),
-            "start": words[0]["start"] if words else 0.0,
-            "end": words[-1]["end"] if words else 0.0,
+            "start": words[0].get("start", 0.0) if words else 0.0,
+            "end": words[-1].get("end", 0.0) if words else 0.0,
             "words": processed_words,
         })
 
     async def close(self) -> None:
-        """Close the Deepgram connection."""
+        """Close the Deepgram connection via SDK."""
         self._running = False
-        if self._ws:
+        if self._connection:
             try:
-                # Send close message to Deepgram
-                await self._ws.send(json.dumps({"type": "CloseStream"}))
-                await self._ws.close()
-            except Exception:
+                await self._connection.send_close_stream()
+            except Exception as e:
                 pass
-            self._ws = None
-
-        if self._receive_task:
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                pass
-
-        logger.info("Deepgram connection closed")
-
+            self._connection = None
+        
+        logger.info("Deepgram connection closed by client")
+    
     @property
     def is_connected(self) -> bool:
-        return self._running and self._ws is not None
+        return self._running and self._connection is not None

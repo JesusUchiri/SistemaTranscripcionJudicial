@@ -7,16 +7,39 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool, QueuePool
+import logging
 
 from app.config import settings
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.ENVIRONMENT == "development",
-    pool_size=20,
-    max_overflow=10,
-    pool_pre_ping=True,
-)
+logger = logging.getLogger(__name__)
+
+# Configuración de engine según ambiente
+if settings.ENVIRONMENT == "production":
+    # Producción: usar QueuePool con timeouts más altos
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        pool_size=10,
+        max_overflow=5,
+        pool_pre_ping=True,
+        pool_recycle=3600,  # Reciclar conexiones cada hora
+        connect_args={
+            "timeout": 30,  # Timeout de conexión: 30s
+            "command_timeout": 30,
+        },
+    )
+    logger.info("✅ Database engine creado en modo PRODUCCIÓN")
+else:
+    # Desarrollo: permitir debugging y reloads
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.ENVIRONMENT == "development",
+        pool_size=20,
+        max_overflow=10,
+        pool_pre_ping=True,
+    )
+    logger.info("✅ Database engine creado en modo DESARROLLO")
 
 async_session = async_sessionmaker(
     engine,

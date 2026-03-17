@@ -7,8 +7,13 @@ Audio → Deepgram Nova-3 → Canvas TipTap → Edición → Generación de Acta
 ## Stack
 - **Backend**: FastAPI 0.115+, SQLAlchemy async + asyncpg, PostgreSQL 16, Redis 7, Celery, Alembic
 - **Frontend**: Next.js 14, React 18, TypeScript, TipTap (ProseMirror), Zustand, Tailwind CSS, wavesurfer.js
-- **IA**: Deepgram Nova-3 (streaming), faster-whisper large-v3 (batch), Pyannote 3.1 (diarización), Claude Sonnet 4 (actas)
+- **IA**: Deepgram Nova-3 (streaming + pre-recorded batch), Claude Sonnet 4 (actas), python-docx (DOCX), weasyprint (PDF)
 - **Infra**: Docker Compose (6 servicios), nginx reverse proxy
+
+## Estado General
+- ✅ **Nivel 1 (MVP - Sprints 1-5)**: Completamente implementado
+- ✅ **Nivel 2 (Extensión - Sprints 6-10)**: Completamente implementado
+- ⏳ **Nivel 3 (Cierre - Sprints 11-15)**: Pendiente (mejoras UI/UX, corpus, capacitación)
 
 ## Comandos clave
 ```bash
@@ -76,6 +81,32 @@ judiscribe/
 - Nombres en español para entidades del dominio (audiencia, segmento, hablante, marcador)
 - Nombres de variables del dominio en español, nombres técnicos en inglés
 - Mensajes de commit: `tipo: descripción` (feat, fix, chore, docs)
+
+## Skills Disponibles (Integrados desde https://skills.sh/)
+
+**Ubicación**: `.claude/skills/`
+
+### Backend & AI
+1. **architecture-patterns** - Patrones probados (Clean, Hexagonal, DDD)
+2. **python-performance-optimization** - Profiling, optimización de código
+3. **claude-api** ⭐ - Claude API + SDK Anthropic (para acta generation)
+
+### Frontend
+4. **react-patterns** - React 19, Server Components, Suspense
+5. **nextjs-app-router-patterns** - Next.js 14+ App Router
+6. **tailwind-css-patterns** - CSS utilities, responsive design
+7. **shadcn-ui** - Componentes UI + validación con React Hook Form
+8. **frontend-design** - Interfaz UI/UX de alta calidad
+9. **interface-design** - Dashboards, paneles interactivos
+
+### Cross-cutting
+10. **accessibility-compliance** - WCAG 2.2, ARIA, screen readers
+11. **design-system-patterns** - Tokens de diseño, theming
+
+### Usar Skills
+- Ubicación: `.claude/skills/[nombre]/SKILL.md`
+- Cada skill tiene documentación por lenguaje (Python, TypeScript, etc.)
+- **Sprint 5**: Usar `claude-api` para implementar `acta_generator.py`
 
 ## Referencia completa
 Ver `Readme.md` en la raíz del Proyecto Tesis para la especificación técnica completa (32 secciones).

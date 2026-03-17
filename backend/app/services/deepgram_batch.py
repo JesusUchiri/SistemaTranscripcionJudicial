@@ -6,7 +6,8 @@ Diarización: diarize=true identifica distintas voces (SPEAKER_00, SPEAKER_01, .
 """
 import logging
 from collections import Counter
-from typing import Optional
+from typing import Optional, List, Dict, Any, Set
+import itertools
 
 import httpx
 
@@ -16,40 +17,22 @@ from app.data.legal_keyterms import get_keyterms
 logger = logging.getLogger(__name__)
 
 
+from deepgram import AsyncDeepgramClient
+
 class DeepgramBatchService:
     """
-    Transcripción batch de archivos de audio con Deepgram Nova-3 pre-recorded API.
+    Transcripción batch de archivos de audio con Deepgram Nova-3 pre-recorded API y deepgram-sdk.
 
     Responsabilidades:
-    - Subir audio a Deepgram
+    - Subir audio a Deepgram usando SDK oficial
     - Obtener transcripción completa con diarización
     - Formatear resultados en segmentos
     """
 
-    def __init__(self, keyterms: Optional[list[str]] = None):
-        self.keyterms = keyterms or get_keyterms(100)
-        self.api_key = settings.DEEPGRAM_API_KEY
-
-    def _build_url(self) -> str:
-        """Build the Deepgram pre-recorded API URL with optimized params."""
-        base = "https://api.deepgram.com/v1/listen"
-        params = [
-            f"model={settings.DEEPGRAM_MODEL}",
-            "language=es-419",
-            "smart_format=true",
-            "diarize=true",
-            "punctuate=true",
-            "numerals=true",
-            "filler_words=false",
-            "paragraphs=true",
-            "utterances=true",
-            "detect_language=false",
-        ]
-        # Add keyterms (up to 100)
-        for term in self.keyterms[:100]:
-            params.append(f"keywords={term}")
-
-        return f"{base}?{'&'.join(params)}"
+    def __init__(self, keyterms: Optional[List[str]] = None):
+        self.keyterms: List[str] = keyterms if keyterms is not None else get_keyterms(100)
+        self.api_key: str = settings.DEEPGRAM_API_KEY
+        self.client = AsyncDeepgramClient(self.api_key)
 
     @staticmethod
     def _speaker_dominante(words: list) -> str:
@@ -64,7 +47,7 @@ class DeepgramBatchService:
 
     async def transcribe_file(self, audio_bytes: bytes, mime_type: str = "audio/wav") -> dict:
         """
-        Transcribe an audio file using Deepgram pre-recorded API.
+        Transcribe an audio file using Deepgram pre-recorded API via SDK.
 
         Returns:
             dict with keys:
@@ -72,18 +55,29 @@ class DeepgramBatchService:
             - duration: total audio duration in seconds
             - speakers_count: number of unique speakers detected
         """
-        url = self._build_url()
-        headers = {
-            "Authorization": f"Token {self.api_key}",
-            "Content-Type": mime_type,
-        }
-
         logger.info(f"Sending audio to Deepgram batch API ({len(audio_bytes)} bytes, {mime_type})")
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(url, headers=headers, content=audio_bytes)
-            response.raise_for_status()
-            result = response.json()
+        keyterms_list = list(itertools.islice(self.keyterms, 100))
+
+        response = await self.client.listen.v1.media.transcribe_file(
+            request=audio_bytes,
+            model=settings.DEEPGRAM_MODEL,
+            language="es-419",
+            smart_format=True,
+            diarize=True,
+            punctuate=True,
+            numerals=True,
+            filler_words=False,
+            paragraphs=True,
+            utterances=True,
+            detect_language=False,
+            keyterm=keyterms_list
+        )
+
+        
+        # El SDK de Deepgram devuelve un objeto tipo Pydantic (ListenV1Response) o dict 
+        # Convertimos a dict si tiene to_dict para reutilizar _parse_results
+        result = response.to_dict() if hasattr(response, "to_dict") else response.model_dump() if hasattr(response, "model_dump") else response
 
         return self._parse_results(result)
 
@@ -108,9 +102,9 @@ class DeepgramBatchService:
         # Use utterances if paragraphs not available
         utterances = results.get("utterances", [])
 
-        segments = []
-        all_speakers = set()
-        orden = 0
+        segments: List[Dict[str, Any]] = []
+        all_speakers: Set[str] = set()
+        orden: int = 0
 
         if paragraphs:
             # Use paragraphs for better structuring
