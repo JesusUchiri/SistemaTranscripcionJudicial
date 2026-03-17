@@ -38,8 +38,8 @@ ALLOWED_MIME_TYPES = {
     "video/webm",  # Some recorders save as webm with audio
 }
 
-# Max file size: 500MB
-MAX_FILE_SIZE = 500 * 1024 * 1024
+# Max file size: 2GB (soporta WAV estéreo hasta ~2h, MP3/AAC/FLAC hasta 40h)
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 
 
 def _normalize_mime(content_type: str, filename: str) -> str:
@@ -85,27 +85,36 @@ async def transcribir_audio(
                    f"Se aceptan: WAV, MP3, MP4, M4A, OGG, WebM, FLAC, AAC"
         )
 
-    # Read the file
-    audio_bytes = await audio.read()
-
-    if len(audio_bytes) == 0:
-        raise HTTPException(status_code=400, detail="El archivo de audio está vacío")
-
-    if len(audio_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=f"El archivo es demasiado grande. Máximo: {MAX_FILE_SIZE // (1024*1024)}MB"
-        )
-
-    # Save the audio file
+    # Stream the file to disk in chunks to avoid loading everything in RAM
     os.makedirs(settings.AUDIO_STORAGE_PATH, exist_ok=True)
     audio_id = str(uuid.uuid4())
     ext = os.path.splitext(audio.filename or ".wav")[1] or ".wav"
     audio_filename = f"{audio_id}{ext}"
     audio_path = os.path.join(settings.AUDIO_STORAGE_PATH, audio_filename)
 
-    with open(audio_path, "wb") as f:
-        f.write(audio_bytes)
+    audio_size = 0
+    CHUNK = 8 * 1024 * 1024  # 8MB chunks
+    try:
+        with open(audio_path, "wb") as f:
+            while True:
+                chunk = await audio.read(CHUNK)
+                if not chunk:
+                    break
+                audio_size += len(chunk)
+                if audio_size > MAX_FILE_SIZE:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"El archivo es demasiado grande. Máximo: {MAX_FILE_SIZE // (1024**3)}GB"
+                    )
+                f.write(chunk)
+    except HTTPException:
+        if os.path.exists(audio_path):
+            os.unlink(audio_path)
+        raise
+
+    if audio_size == 0:
+        os.unlink(audio_path)
+        raise HTTPException(status_code=400, detail="El archivo de audio está vacío")
 
     # Create the audiencia record first
     from datetime import datetime
@@ -125,10 +134,10 @@ async def transcribir_audio(
     await db.flush()
     await db.refresh(audiencia)
 
-    # Transcribe with Deepgram
+    # Transcribe with Deepgram (read from disk — no double RAM usage)
     try:
         service = DeepgramBatchService()
-        result = await service.transcribe_file(audio_bytes, mime_type)
+        result = await service.transcribe_file(audio_path, mime_type)
     except Exception as e:
         # Update audiencia state to reflect error
         audiencia.estado = "pendiente"

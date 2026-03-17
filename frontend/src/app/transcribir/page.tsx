@@ -28,7 +28,7 @@ interface TranscriptionResult {
 type UploadPhase = 'idle' | 'selected' | 'uploading' | 'transcribing' | 'done' | 'error'
 
 const ACCEPTED_EXTENSIONS = '.wav,.mp3,.mp4,.m4a,.ogg,.webm,.flac,.aac'
-const MAX_FILE_SIZE_MB = 500
+const MAX_FILE_SIZE_MB = 2048 // 2GB
 
 /* ── Helpers ────────────────────────────────────────── */
 
@@ -88,7 +88,7 @@ export default function TranscribirPage() {
 
         // Validate size
         if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-            setError(`El archivo es demasiado grande. Máximo: ${MAX_FILE_SIZE_MB}MB`)
+            setError(`El archivo es demasiado grande. Máximo: 2GB`)
             return
         }
 
@@ -165,7 +165,7 @@ export default function TranscribirPage() {
 
             const { data } = await api.post('/api/transcripcion-audio', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
-                timeout: 300000, // 5 min timeout
+                timeout: 1200000, // 20 min — suficiente para archivos de 5h+
                 onUploadProgress: (progressEvent) => {
                     if (progressEvent.total) {
                         const pct = Math.round((progressEvent.loaded / progressEvent.total) * 30)
@@ -295,7 +295,7 @@ export default function TranscribirPage() {
                                 </div>
 
                                 <p className="upload-dropzone__limit">
-                                    Máximo {MAX_FILE_SIZE_MB}MB por archivo
+                                    Máximo 2GB · WAV, MP3, M4A, FLAC, OGG · hasta 5+ horas
                                 </p>
                             </div>
                         </div>

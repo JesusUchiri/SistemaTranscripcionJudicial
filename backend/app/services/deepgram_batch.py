@@ -5,6 +5,7 @@ Procesa archivos de audio completos (pre-grabados) usando la API pre-recorded.
 Diarización: diarize=true identifica distintas voces (SPEAKER_00, SPEAKER_01, ...).
 """
 import logging
+import os
 from collections import Counter
 from typing import List, Dict, Any, Set
 
@@ -40,9 +41,10 @@ class DeepgramBatchService:
         dominante = Counter(speakers).most_common(1)[0][0]
         return f"SPEAKER_{dominante:02d}"
 
-    async def transcribe_file(self, audio_bytes: bytes, mime_type: str = "audio/wav") -> dict:
+    async def transcribe_file(self, audio_source, mime_type: str = "audio/wav") -> dict:
         """
         Transcribe an audio file using Deepgram pre-recorded API via SDK.
+        audio_source: file path (str) or bytes.
 
         Returns:
             dict with keys:
@@ -50,7 +52,15 @@ class DeepgramBatchService:
             - duration: total audio duration in seconds
             - speakers_count: number of unique speakers detected
         """
-        logger.info(f"Sending audio to Deepgram batch API ({len(audio_bytes)} bytes, {mime_type})")
+        if isinstance(audio_source, str):
+            # File path — read from disk
+            file_size = os.path.getsize(audio_source)
+            logger.info(f"Sending audio to Deepgram batch API (file={audio_source}, {file_size/1024/1024:.1f}MB, {mime_type})")
+            with open(audio_source, "rb") as f:
+                audio_bytes = f.read()
+        else:
+            audio_bytes = audio_source
+            logger.info(f"Sending audio to Deepgram batch API ({len(audio_bytes)/1024/1024:.1f}MB, {mime_type})")
 
         response = await self.client.listen.v1.media.transcribe_file(
             request=audio_bytes,
