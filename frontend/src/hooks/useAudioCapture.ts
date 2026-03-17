@@ -1,6 +1,6 @@
 /**
  * useAudioCapture — captures audio from browser using MediaRecorder API.
- * Sends PCM 16kHz mono chunks every 250ms via callback.
+ * Sends WAV/PCM chunks via callback.
  */
 'use client'
 
@@ -22,11 +22,10 @@ export function useAudioCapture({
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
 
     const mediaStreamRef = useRef<MediaStream | null>(null)
-    const processorRef = useRef<ScriptProcessorNode | null>(null)
-    const contextRef = useRef<AudioContext | null>(null)
+    const recorderRef = useRef<MediaRecorder | null>(null)
     const sequenceRef = useRef(0)
-    const bufferRef = useRef<Float32Array[]>([])
-    const intervalRef = useRef<NodeJS.Timeout | null>(null)
+    const chunksRef = useRef<Blob[]>([])
+    const timerRef = useRef<NodeJS.Timeout | null>(null)
 
     const listDevices = useCallback(async () => {
         try {
@@ -55,10 +54,9 @@ export function useAudioCapture({
                 } else if (source === 'microphone') {
                     stream = await navigator.mediaDevices.getUserMedia({
                         audio: {
-                            sampleRate,
-                            channelCount: 1,
                             echoCancellation: true,
                             noiseSuppression: true,
+                            autoGainControl: true,
                         },
                     })
                 } else {
@@ -70,53 +68,40 @@ export function useAudioCapture({
 
                 mediaStreamRef.current = stream
 
-                // Create AudioContext for PCM conversion
-                const audioContext = new AudioContext({ sampleRate })
-                contextRef.current = audioContext
+                // Use MediaRecorder API (no deprecation warnings)
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm')
+                    ? 'audio/webm'
+                    : 'audio/mp4'
 
-                const sourceNode = audioContext.createMediaStreamSource(stream)
-                const processor = audioContext.createScriptProcessor(4096, 1, 1)
-                processorRef.current = processor
+                const recorder = new MediaRecorder(stream, { mimeType })
+                recorderRef.current = recorder
 
-                processor.onaudioprocess = (e) => {
-                    const float32Data = e.inputBuffer.getChannelData(0)
-                    bufferRef.current.push(new Float32Array(float32Data))
+                recorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) {
+                        chunksRef.current.push(e.data)
+                    }
                 }
 
-                sourceNode.connect(processor)
-                processor.connect(audioContext.destination)
+                recorder.start()
 
-                // Flush buffer every chunkIntervalMs
-                intervalRef.current = setInterval(() => {
-                    if (bufferRef.current.length === 0) return
+                // Send buffered chunks every chunkIntervalMs
+                timerRef.current = setInterval(() => {
+                    if (chunksRef.current.length === 0) return
 
-                    // Concatenate all buffered chunks
-                    const totalLength = bufferRef.current.reduce((acc, b) => acc + b.length, 0)
-                    const merged = new Float32Array(totalLength)
-                    let offset = 0
-                    for (const chunk of bufferRef.current) {
-                        merged.set(chunk, offset)
-                        offset += chunk.length
+                    // Combine all chunks into one blob
+                    const blob = new Blob(chunksRef.current, { type: recorder.mimeType })
+                    chunksRef.current = []
+
+                    // Convert blob to base64
+                    const reader = new FileReader()
+                    reader.onloadend = () => {
+                        const base64 = reader.result as string
+                        const base64Data = base64.split(',')[1] || base64
+
+                        sequenceRef.current++
+                        onAudioChunk(base64Data, sequenceRef.current)
                     }
-                    bufferRef.current = []
-
-                    // Convert float32 to int16 PCM
-                    const int16 = new Int16Array(merged.length)
-                    for (let i = 0; i < merged.length; i++) {
-                        const s = Math.max(-1, Math.min(1, merged[i]))
-                        int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff
-                    }
-
-                    // Convert to base64
-                    const bytes = new Uint8Array(int16.buffer)
-                    let binary = ''
-                    for (let i = 0; i < bytes.byteLength; i++) {
-                        binary += String.fromCharCode(bytes[i])
-                    }
-                    const base64 = btoa(binary)
-
-                    sequenceRef.current++
-                    onAudioChunk(base64, sequenceRef.current)
+                    reader.readAsDataURL(blob)
                 }, chunkIntervalMs)
 
                 setIsCapturing(true)
@@ -125,27 +110,23 @@ export function useAudioCapture({
                 console.error('Audio capture error:', err)
             }
         },
-        [onAudioChunk, sampleRate, chunkIntervalMs]
+        [onAudioChunk, chunkIntervalMs]
     )
 
     const stopCapture = useCallback(() => {
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current)
-            intervalRef.current = null
+        if (timerRef.current) {
+            clearInterval(timerRef.current)
+            timerRef.current = null
         }
-        if (processorRef.current) {
-            processorRef.current.disconnect()
-            processorRef.current = null
-        }
-        if (contextRef.current) {
-            contextRef.current.close()
-            contextRef.current = null
+        if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+            recorderRef.current.stop()
+            recorderRef.current = null
         }
         if (mediaStreamRef.current) {
             mediaStreamRef.current.getTracks().forEach((t) => t.stop())
             mediaStreamRef.current = null
         }
-        bufferRef.current = []
+        chunksRef.current = []
         sequenceRef.current = 0
         setIsCapturing(false)
     }, [])
