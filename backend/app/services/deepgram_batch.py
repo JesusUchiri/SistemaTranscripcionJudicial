@@ -6,13 +6,9 @@ Diarización: diarize=true identifica distintas voces (SPEAKER_00, SPEAKER_01, .
 """
 import logging
 from collections import Counter
-from typing import Optional, List, Dict, Any, Set
-import itertools
-
-import httpx
+from typing import List, Dict, Any, Set
 
 from app.config import settings
-from app.data.legal_keyterms import get_keyterms
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +25,7 @@ class DeepgramBatchService:
     - Formatear resultados en segmentos
     """
 
-    def __init__(self, keyterms: Optional[List[str]] = None):
-        self.keyterms: List[str] = keyterms if keyterms is not None else get_keyterms(100)
+    def __init__(self):
         self.api_key: str = settings.DEEPGRAM_API_KEY
         self.client = AsyncDeepgramClient(api_key=self.api_key)
 
@@ -57,11 +52,9 @@ class DeepgramBatchService:
         """
         logger.info(f"Sending audio to Deepgram batch API ({len(audio_bytes)} bytes, {mime_type})")
 
-        keyterms_list = list(itertools.islice(self.keyterms, 100))
-
         response = await self.client.listen.v1.media.transcribe_file(
             request=audio_bytes,
-            model=settings.DEEPGRAM_MODEL,
+            model="nova-2",
             language="es-419",
             smart_format=True,
             diarize=True,
@@ -71,7 +64,6 @@ class DeepgramBatchService:
             paragraphs=True,
             utterances=True,
             detect_language=False,
-            keyterm=keyterms_list
         )
 
         
