@@ -456,6 +456,7 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
             "started_at": datetime.now(),
         }
 
+        logger.info(f"[DIAG] Entrando al loop de recepción para audiencia: {audiencia_id}")
         # Main receive loop — get audio from client, forward to Deepgram
         while True:
             message = await websocket.receive_text()
@@ -467,21 +468,25 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
 
             msg_type = data.get("type")
             if msg_type == "audio_chunk":
+                seq = data.get("sequence", 0)
+                # Echo de diagnóstico: confirma al frontend que el backend recibió el chunk
+                if seq <= 5:
+                    logger.info(f"[DIAG] audio_chunk recibido seq={seq}, dg_running={dg_service.is_connected}")
+                    await websocket.send_json({"type": "debug", "msg": f"backend recibio seq={seq}, dg_running={dg_service.is_connected}"})
                 try:
                     payload = data.get("data")
                     if not payload:
                         logger.warning("audio_chunk sin campo 'data'")
                         continue
                     audio_bytes = base64.b64decode(payload)
-                    seq = data.get("sequence", 0)
-                    logger.debug(f"audio_chunk recibido: seq={seq}, bytes={len(audio_bytes)}")
-                    audio_file.write(audio_bytes)
+                    logger.debug(f"audio_chunk decodificado: seq={seq}, bytes={len(audio_bytes)}")
+                    try:
+                        audio_file.write(audio_bytes)
+                    except Exception as file_err:
+                        logger.warning(f"Error escribiendo audio a disco: {file_err}")
                     await dg_service.send_audio(audio_bytes)
-                    # Echo de diagnóstico: confirma al frontend que el backend recibió el chunk
-                    if seq <= 3:
-                        await websocket.send_json({"type": "debug", "msg": f"backend recibio seq={seq}, bytes={len(audio_bytes)}, dg_running={dg_service.is_connected}"})
                 except Exception as e:
-                    logger.warning(f"Error procesando audio_chunk: {e}")
+                    logger.warning(f"Error procesando audio_chunk seq={seq}: {e}")
                     continue
 
             elif msg_type == "stop":
