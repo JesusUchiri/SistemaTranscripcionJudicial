@@ -44,10 +44,13 @@ MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 
 def _normalize_mime(content_type: str, filename: str) -> str:
     """Normalize MIME type based on content_type and file extension."""
-    if content_type and content_type in ALLOWED_MIME_TYPES:
-        return content_type
+    # Strip params like "audio/wav; codecs=1" → "audio/wav"
+    base_type = (content_type or "").split(";")[0].strip().lower()
 
-    # Try from extension
+    if base_type and base_type in ALLOWED_MIME_TYPES:
+        return base_type
+
+    # Fallback: derive from file extension
     ext = os.path.splitext(filename or "")[1].lower()
     ext_map = {
         ".wav": "audio/wav",
@@ -59,7 +62,7 @@ def _normalize_mime(content_type: str, filename: str) -> str:
         ".flac": "audio/flac",
         ".aac": "audio/aac",
     }
-    return ext_map.get(ext, content_type or "audio/wav")
+    return ext_map.get(ext, base_type or "audio/wav")
 
 
 @router.post("", status_code=status.HTTP_200_OK)
@@ -77,7 +80,9 @@ async def transcribir_audio(
     con todos sus segmentos en una sola operación.
     """
     # Validate file type
+    logger.info(f"Upload recibido: filename={audio.filename}, content_type={audio.content_type!r}")
     mime_type = _normalize_mime(audio.content_type, audio.filename)
+    logger.info(f"MIME normalizado: {mime_type}")
     if mime_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
