@@ -34,8 +34,14 @@ logger = logging.getLogger(__name__)
 active_sessions: dict[str, dict] = {}
 
 
+DEMO_AUDIENCIA_ID = "00000000-0000-0000-0000-000000000000"
+
+
 def _puede_acceder_audiencia(audiencia: Audiencia, usuario: Usuario) -> bool:
     if usuario.rol in ("admin", "supervisor"):
+        return True
+    # La audiencia DEMO es accesible para cualquier usuario autenticado y activo
+    if str(audiencia.id) == DEMO_AUDIENCIA_ID:
         return True
     return audiencia.created_by == usuario.id
 

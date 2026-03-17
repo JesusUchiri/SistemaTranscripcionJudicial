@@ -111,10 +111,10 @@ export function useDeepgramSocket(audienciaId: string) {
             }
         }
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
             setIsConnected(false)
             setConnectionStatus('disconnected')
-            console.log('WebSocket closed')
+            console.log(`WebSocket closed — code: ${event.code}, reason: "${event.reason}", wasClean: ${event.wasClean}`)
 
             // Auto-reconnect
             if (reconnectAttemptsRef.current < maxReconnectAttempts) {
@@ -125,7 +125,7 @@ export function useDeepgramSocket(audienciaId: string) {
         }
 
         ws.onerror = (e) => {
-            console.error('WebSocket error:', e)
+            console.error('WebSocket error event:', e)
             setError('Error de conexión WebSocket')
         }
     }, [audienciaId, addSegment, updateProvisional, setConnectionStatus])
