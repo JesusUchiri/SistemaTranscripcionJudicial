@@ -63,14 +63,15 @@ class DeepgramStreamingService:
         keyterms_list = list(itertools.islice(self.keyterms, 100))
 
         try:
-            # El frontend envía audio/webm (MediaRecorder API).
-            # NO especificamos encoding/sample_rate para que Deepgram
-            # auto-detecte el formato desde las cabeceras del container WebM.
+            # El frontend envía PCM linear16 @ 16kHz (AudioContext + ScriptProcessorNode)
             self._connection_ctx = self._client.listen.v1.connect(
                 model=settings.DEEPGRAM_MODEL,
                 language="es-419",
                 smart_format="true",
                 diarize="true",
+                encoding="linear16",
+                sample_rate="16000",
+                channels="1",
                 interim_results="true",
                 utterance_end_ms="3500",
                 vad_events="true",
