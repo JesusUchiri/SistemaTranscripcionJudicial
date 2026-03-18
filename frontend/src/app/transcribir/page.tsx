@@ -151,10 +151,12 @@ export default function TranscribirPage() {
                 headers: { 'Content-Type': undefined },
                 timeout: 1200000,
                 onUploadProgress: (progressEvent) => {
-                    if (!progressEvent.total) return
-                    const pct = Math.round((progressEvent.loaded / progressEvent.total) * 30)
+                    const total = progressEvent.total || 0
+                    const pct = total > 0
+                        ? Math.round((progressEvent.loaded / total) * 30)
+                        : Math.min(progressEvent.loaded > 0 ? 15 : 0, 29) // pulso si total desconocido
                     setProgress(pct)
-                    if (progressEvent.loaded >= progressEvent.total) {
+                    if (total > 0 && progressEvent.loaded >= total) {
                         setPhase('transcribing')
                         setProgress(30)
                         if (activeInterval) clearInterval(activeInterval)
