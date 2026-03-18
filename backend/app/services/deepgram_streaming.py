@@ -164,7 +164,11 @@ class DeepgramStreamingService:
                 "start": w.get("start", 0.0),
                 "end": w.get("end", 0.0),
                 "confidence": w.get("confidence", 1.0),
-                "alternatives": [],
+                "speaker": w.get("speaker", 0),
+                "alternatives": [
+                    {"word": alt.get("word", ""), "confidence": alt.get("confidence", 0.0)}
+                    for alt in (w.get("alternatives") or [])
+                ],
             }
             for w in words
         ]

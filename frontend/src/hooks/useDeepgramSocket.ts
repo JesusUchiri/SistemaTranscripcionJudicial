@@ -76,10 +76,9 @@ export function useDeepgramSocket(audienciaId: string) {
                             // Detectar variables en el texto transcrito
                             detectarVariables(msg.texto_mejorado || msg.text, msg.start)
 
-                            const textoFinal = msg.texto_mejorado || msg.text
-
                             const segment: Segmento = {
-                                id: crypto.randomUUID(),
+                                // Usar el ID enviado por el backend para que ediciones apunten al registro DB correcto
+                                id: (msg as any).segment_id || crypto.randomUUID(),
                                 audiencia_id: audienciaId,
                                 speaker_id: msg.speaker,
                                 texto_ia: msg.text,

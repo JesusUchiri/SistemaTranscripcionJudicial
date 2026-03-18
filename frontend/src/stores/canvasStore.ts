@@ -51,6 +51,7 @@ interface CanvasState {
     updateSegment: (segmentId: string, newText: string) => void
     updateProvisional: (text: string, speaker: string, words?: WordTimestamp[]) => void
     clearProvisional: () => void
+    clearLastConsolidated: () => void
     setTranscribing: (value: boolean) => void
     setConnectionStatus: (status: 'disconnected' | 'connected' | 'reconnecting') => void
     setElapsedSeconds: (seconds: number) => void
@@ -109,17 +110,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             // (mismo speaker, timestamp de inicio muy cercano o contenido que se extiende)
             const extensionIndex = state.segments.findIndex(s => {
                 const sameSpeaker = s.speaker_id === segment.speaker_id
+                if (!sameSpeaker) return false  // Nunca consolidar cross-speaker
 
-                // Caso 1: Mismo timestamp de inicio (update)
-                const startTimeClose = Math.abs((s.timestamp_inicio || 0) - (segment.timestamp_inicio || 0)) < 0.5
+                // Caso 1: Mismo timestamp de inicio (actualización del mismo fragmento)
+                const startTimeClose = Math.abs((s.timestamp_inicio || 0) - (segment.timestamp_inicio || 0)) < 0.1
 
-                // Caso 2: El nuevo segmento contiene el texto del anterior (consolidación)
-                const isConsolidation = sameSpeaker && segment.texto_ia.includes(s.texto_ia)
+                // Caso 2: El nuevo segmento extiende el texto del anterior (consolidación del backend)
+                const isConsolidation = segment.texto_ia.length > s.texto_ia.length &&
+                    segment.texto_ia.startsWith(s.texto_ia.slice(0, Math.min(20, s.texto_ia.length)))
 
-                // Caso 3: El anterior es subconjunto del nuevo
-                const isExtension = sameSpeaker && (startTimeClose || isConsolidation)
-
-                return isExtension
+                return startTimeClose || isConsolidation
             })
 
             let newSegments: Segmento[]
@@ -185,6 +185,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 provisionalText: null,
                 provisionalSpeaker: null,
                 provisionalWords: [],
+                lastConsolidatedSegmentId: null,
             }
         }),
 
@@ -219,6 +220,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     clearProvisional: () =>
         set({ provisionalText: null, provisionalSpeaker: null, provisionalWords: [] }),
+
+    clearLastConsolidated: () => set({ lastConsolidatedSegmentId: null }),
 
     setTranscribing: (value) => set({ isTranscribing: value }),
 

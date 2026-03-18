@@ -155,6 +155,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         editedSegmentIds,
         lastConsolidatedSegmentId,
         updateSegment,
+        clearLastConsolidated,
     } = useCanvasStore()
 
     const [popover, setPopover] = useState<PopoverState>({
@@ -535,7 +536,9 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         // También removeProvisional porque addSegment lo marcó como consolidado
         editor.commands.removeProvisional()
         prevProvisionalWordCountRef.current = 0
-    }, [editor, lastConsolidatedSegmentId, segments, getSpeakerInfo])
+        // Limpiar para evitar que el efecto se re-ejecute con datos viejos
+        clearLastConsolidated()
+    }, [editor, lastConsolidatedSegmentId, segments, getSpeakerInfo, clearLastConsolidated])
 
     /* ── Provisional text — aparición palabra por palabra ── */
 

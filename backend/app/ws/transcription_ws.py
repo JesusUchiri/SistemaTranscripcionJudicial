@@ -221,10 +221,13 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         if len(previous_segments) > 25:
             previous_segments.pop(0)
         
-        # Enviar segmento consolidado y mejorado al frontend
+        # Pre-generar UUID para que frontend y backend usen el mismo ID
+        # Esto permite que las ediciones del frontend apunten al registro correcto en DB.
+        segment_id = uuid.uuid4()
         segment_counter += 1
         result_to_send = {
             "type": "transcript",
+            "segment_id": str(segment_id),
             "is_final": True,
             "speaker": speaker_id,
             "text": consolidated_text,
@@ -236,15 +239,15 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
             "end": end_time,
             "words": all_words,
         }
-        
+
         await websocket.send_json(result_to_send)
-        
+
         # Run legal dictionary check on the enhanced text
         try:
             from app.services.legal_dictionary import get_legal_dictionary
             dictionary = get_legal_dictionary()
             suggestions = dictionary.check_segment(texto_mejorado)
-            
+
             for suggestion in suggestions:
                 await websocket.send_json({
                     "type": "suggestion",
@@ -253,11 +256,12 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
                 })
         except Exception as dict_err:
             logger.debug(f"Dictionary check skipped: {dict_err}")
-        
-        # Guardar en base de datos
+
+        # Guardar en base de datos con el mismo UUID enviado al frontend
         try:
             async with async_session() as db:
                 segmento = Segmento(
+                    id=segment_id,
                     audiencia_id=uuid.UUID(audiencia_id),
                     speaker_id=speaker_id,
                     texto_ia=consolidated_text,
