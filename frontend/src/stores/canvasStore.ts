@@ -22,6 +22,8 @@ interface CanvasState {
     provisionalText: string | null
     provisionalSpeaker: string | null
     provisionalWords: WordTimestamp[]
+    // ID del último segmento consolidado (extensión in-place) — para actualizar canvas sin cambio de length
+    lastConsolidatedSegmentId: string | null
     isTranscribing: boolean
     wordCount: number
     elapsedSeconds: number
@@ -72,6 +74,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     provisionalText: null,
     provisionalSpeaker: null,
     provisionalWords: [],
+    lastConsolidatedSegmentId: null,
     isTranscribing: false,
     wordCount: 0,
     elapsedSeconds: 0,
@@ -124,10 +127,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             if (extensionIndex !== -1) {
                 // Es una extensión/actualización/consolidación - reemplazar el segmento anterior
                 const prevSegment = state.segments[extensionIndex]
-                console.log('Consolidating segments:',
-                    prevSegment.texto_ia.substring(0, 40),
-                    '→',
-                    segment.texto_ia.substring(0, 60))
+                const consolidatedId = prevSegment.id
 
                 newSegments = [...state.segments]
                 newSegments[extensionIndex] = {
@@ -137,6 +137,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                     timestamp_fin: segment.timestamp_fin,
                     confianza: segment.confianza,
                     palabras_json: segment.palabras_json,
+                }
+
+                const totalWords = newSegments.reduce(
+                    (acc, s) => acc + (s.texto_editado || s.texto_mejorado || s.texto_ia).split(/\s+/).length,
+                    0
+                )
+                return {
+                    segments: newSegments,
+                    segmentCount: newSegments.length,
+                    wordCount: totalWords,
+                    provisionalText: null,
+                    provisionalSpeaker: null,
+                    provisionalWords: [],
+                    lastConsolidatedSegmentId: consolidatedId,
                 }
             } else {
                 // Nuevo segmento - verificar duplicación exacta
@@ -152,6 +166,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                     return {
                         provisionalText: null,
                         provisionalSpeaker: null,
+                        provisionalWords: [],
                     }
                 }
 
@@ -169,6 +184,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 wordCount: totalWords,
                 provisionalText: null,
                 provisionalSpeaker: null,
+                provisionalWords: [],
             }
         }),
 
@@ -264,6 +280,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             provisionalText: null,
             provisionalSpeaker: null,
             provisionalWords: [],
+            lastConsolidatedSegmentId: null,
             isTranscribing: false,
             wordCount: 0,
             elapsedSeconds: 0,

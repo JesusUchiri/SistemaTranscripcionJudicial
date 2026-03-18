@@ -252,13 +252,14 @@ body {
   /* Asegurar que el párrafo use todo el ancho */
 }
 
-/* Provisional text — inline, fluye dentro del mismo párrafo que el texto confirmado */
+/* Provisional text — inline, fluye dentro del mismo párrafo que el texto confirmado.
+   Mismo color que el texto confirmado para evitar el "desvanecimiento/sombra" visual.
+   La distinción provisional→confirmado se indica únicamente con el cursor de escritura. */
 .text-provisional {
-  color: var(--text-muted);
-  font-style: italic;
-  /* Sin background, border, margin ni padding:
-     el texto provisional vive en el mismo flujo tipográfico que el confirmado.
-     Al confirmarse (frase final), el swap es en la misma posición → sin salto visual. */
+  color: var(--text-primary);
+  opacity: 0.75;
+  /* Sin italic: el texto provisional se lee con la misma facilidad que el confirmado.
+     Al confirmarse, no hay cambio de color ni estilo → transición visual imperceptible. */
 }
 
 @keyframes typing-fade {
@@ -281,6 +282,17 @@ body {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+/* Solidify animation: texto confirmado aparece desde el estado provisional (0.75) a sólido (1.0).
+   Crea continuidad visual: el texto nunca "desaparece", solo se vuelve más sólido. */
+@keyframes solidifyIn {
+  from { opacity: 0.75; }
+  to   { opacity: 1; }
+}
+
+.segment-confirming {
+  animation: solidifyIn 0.25s ease-out forwards;
 }
 
 /* Palabra nueva: aparece con animación */

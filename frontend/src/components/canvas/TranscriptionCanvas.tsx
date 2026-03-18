@@ -153,6 +153,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         provisionalWords,
         activeSegmentId,
         editedSegmentIds,
+        lastConsolidatedSegmentId,
         updateSegment,
     } = useCanvasStore()
 
@@ -400,9 +401,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         // Resetear contador de palabras provisionales
         prevProvisionalWordCountRef.current = 0
 
-        // Determinar si el primer segmento nuevo es del mismo speaker que el último existente
-        const lastExistingSeg = prevCount > 0 ? segments[prevCount - 1] : null
-        const firstNewSeg = nuevos[0]
+        // Bulk load: primera carga de muchos segmentos (ej. al reanudar transcripción)
+        const isBulkLoad = prevCount === 0 && nuevos.length > 5
 
         const htmlParts: string[] = []
 
@@ -417,6 +417,9 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
 
             const classes = ['segment-clickable']
             if (isEdited) classes.push('segment-edited')
+            // Durante streaming (no bulk): animación de solidificación (opacity 0.75→1)
+            // para transición suave desde texto provisional al texto confirmado.
+            if (!isBulkLoad) classes.push('segment-confirming')
 
             if (newSpeaker) {
                 htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}"></speaker-label>`)
@@ -447,9 +450,9 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
             htmlParts.push(`<span class="${segmentClasses.join(' ')}" data-segment-id="${seg.id}" data-timestamp="${timestamp}" data-edited="${isEdited}">${segmentHtml}</span>`)
         })
 
-        // Una sola transacción: elimina el provisional + inserta el texto confirmado
-        // Esto evita el flash intermedio donde el provisional desaparece antes de que
-        // aparezca el texto definitivo.
+        // Una sola transacción: elimina el provisional + inserta el texto confirmado.
+        // El texto confirmado aparece con segment-confirming (opacity 0.75→1) creando
+        // continuidad visual con el texto provisional (opacity 0.75).
         const html = htmlParts.join('')
         editor.chain()
             .removeProvisional()
@@ -459,8 +462,6 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
 
         // Auto-scroll: During streaming, scroll to bottom after DOM update.
         // During initial bulk load (many segments at once), scroll to top.
-        const isBulkLoad = prevCount === 0 && nuevos.length > 5
-        // Double-rAF: primer frame TipTap commitea el DOM, segundo frame el browser recalcula layout
         requestAnimationFrame(() => requestAnimationFrame(() => {
             const el = containerRef.current
             if (!el) return
@@ -493,6 +494,48 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
             }
         }
     }, [editor, activeSegmentId])
+
+    /* ── Consolidated segment update — actualiza DOM cuando un segmento se extiende in-place ── */
+
+    useEffect(() => {
+        if (!editor || !lastConsolidatedSegmentId) return
+
+        const seg = segments.find(s => s.id === lastConsolidatedSegmentId)
+        if (!seg) return
+
+        // Encontrar el span en el DOM y actualizar su contenido directamente.
+        // No modifica el ProseMirror state (evita conflicto con provisional in-flight).
+        const domEl = editor.view.dom.querySelector(`[data-segment-id="${lastConsolidatedSegmentId}"]`) as HTMLElement
+        if (!domEl) return
+
+        const { etiqueta, color } = getSpeakerInfo(seg.speaker_id)
+        const texto = seg.texto_editado || seg.texto_mejorado || seg.texto_ia
+        let newHtml = ''
+        if (seg.palabras_json && seg.palabras_json.length > 0) {
+            seg.palabras_json.forEach((wordObj: any) => {
+                const wordText = wordObj.word
+                const conf = wordObj.confidence
+                const wordLower = wordText.toLowerCase().replace(/[.,;:!?]/g, '')
+                const shouldMark = conf < 0.85 &&
+                    !GRAMMAR_WORDS.has(wordLower) &&
+                    !KNOWN_LEGAL_TERMS.has(wordLower) &&
+                    wordLower.length > 2
+                if (shouldMark) {
+                    const confPercent = Math.round(conf * 100)
+                    newHtml += `<span class="text-low-confidence" data-low-confidence="true" data-confidence="${conf}" data-segment-id="${seg.id}" title="Confianza: ${confPercent}%">${wordText}</span> `
+                } else {
+                    newHtml += `${wordText} `
+                }
+            })
+        } else {
+            newHtml = texto + ' '
+        }
+        domEl.innerHTML = newHtml
+
+        // También removeProvisional porque addSegment lo marcó como consolidado
+        editor.commands.removeProvisional()
+        prevProvisionalWordCountRef.current = 0
+    }, [editor, lastConsolidatedSegmentId, segments, getSpeakerInfo])
 
     /* ── Provisional text — aparición palabra por palabra ── */
 
