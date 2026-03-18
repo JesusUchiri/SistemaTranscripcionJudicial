@@ -2,4 +2,4 @@
 # xhtml2pdf → svglib → rlpycairo → pycairo requiere libcairo2-dev
 
 [phases.setup]
-aptPkgs = ["libcairo2-dev", "pkg-config", "libffi-dev"]
+aptPkgs = ["libcairo2-dev", "libxcb-dev", "pkg-config", "libffi-dev"]
