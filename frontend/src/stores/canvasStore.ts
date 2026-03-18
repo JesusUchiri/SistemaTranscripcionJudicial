@@ -39,6 +39,11 @@ interface CanvasState {
     // Bookmarks
     bookmarks: Bookmark[]
 
+    // Detecciones de variables en transcripción
+    varDetecciones: Array<{ key: string; valorDetectado: string; texto: string; timestamp: number }>
+    addVarDeteccion: (d: { key: string; valorDetectado: string; texto: string; timestamp: number }) => void
+    removeVarDeteccion: (key: string) => void
+
     // Actions
     addSegment: (segment: Segmento) => void
     updateSegment: (segmentId: string, newText: string) => void
@@ -83,6 +88,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     // Bookmarks
     bookmarks: [],
+
+    // Detecciones de variables
+    varDetecciones: [],
+    addVarDeteccion: (d) => set((state) => {
+        // No duplicar si ya existe esa key pendiente
+        if (state.varDetecciones.some(x => x.key === d.key)) return state
+        return { varDetecciones: [...state.varDetecciones, d] }
+    }),
+    removeVarDeteccion: (key) => set((state) => ({
+        varDetecciones: state.varDetecciones.filter(d => d.key !== key),
+    })),
 
     addSegment: (segment) =>
         set((state) => {
@@ -256,6 +272,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             currentAudioTime: 0,
             activeSegmentId: null,
             isSeeking: false,
+            varDetecciones: [],
             editedSegmentIds: [],
             bookmarks: [],
         }),

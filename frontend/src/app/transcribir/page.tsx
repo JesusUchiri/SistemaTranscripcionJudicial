@@ -250,7 +250,7 @@ export default function TranscribirPage() {
                         </div>
                     )}
 
-                    {isProcessing && (
+                    {(phase === 'uploading' || phase === 'transcribing') && (
                         <div className="text-center py-12">
                             <div className="w-12 h-12 border-4 border-[var(--accent-gold)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
                             <h3 className="font-bold text-lg">{phase === 'uploading' ? 'Subiendo...' : 'Procesando...'}</h3>

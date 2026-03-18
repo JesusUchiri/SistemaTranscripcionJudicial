@@ -17,7 +17,9 @@ class UsuarioStats(BaseModel):
     created_at: datetime
     transcripciones_count: int
     duracion_total_segundos: float
-    costo_total_usd: float
+    costo_deepgram_usd: float
+    costo_claude_usd: float
+    costo_total_usd: float  # deepgram + claude
 
     model_config = {"from_attributes": True}
 

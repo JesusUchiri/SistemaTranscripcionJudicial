@@ -253,7 +253,7 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
 
         message = client.messages.create(
             model=settings.ANTHROPIC_MODEL,
-            max_tokens=8000,
+            max_tokens=4096,
             temperature=0.2,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -274,7 +274,35 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
     ultima_acta = result.scalars().first()
     nueva_version = (ultima_acta.version + 1) if ultima_acta else 1
 
-    # 10. Guardar en BD
+    # 10. Reemplazar tokens {{VARIABLE}} en el contenido generado
+    reemplazos = {
+        "EXPEDIENTE":    audiencia.expediente or "",
+        "JUZGADO":       audiencia.juzgado or "",
+        "TIPO_AUDIENCIA": audiencia.tipo_audiencia or "",
+        "INSTANCIA":     audiencia.instancia or "",
+        "SALA":          audiencia.sala or "",
+        "DELITO":        audiencia.delito or "",
+        "IMPUTADO":      audiencia.imputado_nombre or "",
+        "AGRAVIADO":     audiencia.agraviado_nombre or "",
+        "ESPECIALISTA":  audiencia.especialista_audiencia or audiencia.especialista_causa or "",
+        "FECHA":         audiencia.fecha.strftime("%d de %B de %Y") if audiencia.fecha else "",
+        "HORA_INICIO":   audiencia.hora_inicio.strftime("%H:%M") if audiencia.hora_inicio else "",
+        "HORA_FIN":      audiencia.hora_fin.strftime("%H:%M") if audiencia.hora_fin else "",
+    }
+    # Derivar JUEZ/FISCAL/DEFENSOR de hablantes
+    for h in hablantes:
+        if h.rol in ("juez", "juez_director", "jueces_colegiado") and h.nombre:
+            reemplazos.setdefault("JUEZ", h.nombre)
+        elif h.rol == "fiscal" and h.nombre:
+            reemplazos.setdefault("FISCAL", h.nombre)
+        elif h.rol in ("defensa_imputado", "defensa_agraviado") and h.nombre:
+            reemplazos.setdefault("DEFENSOR", h.nombre)
+
+    for token, valor in reemplazos.items():
+        if valor:
+            contenido_llm = contenido_llm.replace(f"{{{{{token}}}}}", valor)
+
+    # 11. Guardar en BD
     acta = Acta(
         audiencia_id=audiencia_id,
         version=nueva_version,

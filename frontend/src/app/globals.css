@@ -46,6 +46,11 @@
   --warning: #BB8539;
 }
 
+html, body {
+  height: 100%;
+  overflow: hidden; /* Evita que el body/html actúen como scroll container */
+}
+
 html {
   font-family: var(--font-body);
   color: var(--text-primary);
@@ -54,7 +59,6 @@ html {
 
 body {
   background: var(--bg-primary);
-  min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -68,15 +72,23 @@ body {
  * Default Word margins (Normal): 25.4mm = 96px
  */
 
-/* Page area: dark workspace with centered paper */
-.canvas-page-area {
-  background: var(--bg-primary);
+/* Scroll container — solo scroll, sin flex centering que interfiera */
+.canvas-scroll-area {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg-primary);
+}
+
+/* Centering wrapper — solo centra el papel A4 */
+.canvas-page-area {
+  min-height: 100%;
   padding: 40px 0;
   display: flex;
   justify-content: center;
   align-items: flex-start;
+  background: var(--bg-primary);
 }
 
 /* The "paper" itself — A4 proportions */

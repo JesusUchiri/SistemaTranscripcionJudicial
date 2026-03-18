@@ -8,6 +8,7 @@ import { useRef, useCallback, useState, useEffect } from 'react'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { wsBaseUrl } from '@/lib/urls'
 import type { TranscriptMessage, Segmento, SuggestionMessage } from '@/types'
+import { VARIABLES_DEF } from '@/lib/variables'
 
 export function useDeepgramSocket(audienciaId: string) {
     const [isConnected, setIsConnected] = useState(false)
@@ -23,7 +24,24 @@ export function useDeepgramSocket(audienciaId: string) {
         updateProvisional,
         setConnectionStatus,
         setTranscribing,
+        addVarDeteccion,
     } = useCanvasStore()
+
+    /** Intenta detectar variables en el texto de un segmento final */
+    const detectarVariables = useCallback((texto: string, timestamp: number) => {
+        for (const v of VARIABLES_DEF) {
+            if (!v.pattern) continue
+            const match = v.pattern.exec(texto)
+            if (match?.[1]) {
+                const valorDetectado = match[1].trim()
+                if (valorDetectado.length < 2) continue
+                // Fragmento de contexto (máx 50 chars)
+                const idx = texto.indexOf(match[0])
+                const fragmento = texto.slice(Math.max(0, idx - 10), idx + match[0].length + 10)
+                addVarDeteccion({ key: v.key, valorDetectado, texto: fragmento, timestamp })
+            }
+        }
+    }, [addVarDeteccion])
 
     const connect = useCallback(() => {
         if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -55,8 +73,9 @@ export function useDeepgramSocket(audienciaId: string) {
                     case 'transcript': {
                         const msg = data as TranscriptMessage
                         if (msg.is_final) {
-                            // Confirmed segment — add to store
-                            // Usar texto mejorado si está disponible, sino el original
+                            // Detectar variables en el texto transcrito
+                            detectarVariables(msg.texto_mejorado || msg.text, msg.start)
+
                             const textoFinal = msg.texto_mejorado || msg.text
 
                             const segment: Segmento = {
@@ -129,7 +148,7 @@ export function useDeepgramSocket(audienciaId: string) {
             console.error('WebSocket error event:', e)
             setError('Error de conexión WebSocket')
         }
-    }, [audienciaId, addSegment, updateProvisional, setConnectionStatus])
+    }, [audienciaId, addSegment, updateProvisional, setConnectionStatus, detectarVariables])
 
     const sendAudio = useCallback(
         (base64Data: string, sequence: number) => {

@@ -35,6 +35,7 @@ export function useAudioCapture({
     chunkIntervalMs = 250,
 }: AudioCaptureOptions) {
     const [isCapturing, setIsCapturing] = useState(false)
+    const [isPaused, setIsPaused] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
 
@@ -149,6 +150,34 @@ export function useAudioCapture({
         [onAudioChunk, sampleRate, chunkIntervalMs]
     )
 
+    const pauseCapture = useCallback(() => {
+        if (!isCapturing || isPaused) return
+        // Disconnect the processor node to stop sending audio, but keep AudioContext + stream alive
+        if (processorRef.current) {
+            processorRef.current.disconnect()
+        }
+        bufferRef.current = []
+        samplesAccumRef.current = 0
+        setIsPaused(true)
+    }, [isCapturing, isPaused])
+
+    const resumeCapture = useCallback(() => {
+        if (!isCapturing || !isPaused) return
+        const ctx = audioContextRef.current
+        const stream = mediaStreamRef.current
+        const processor = processorRef.current
+        if (!ctx || !stream || !processor) return
+
+        // Resume AudioContext if it was suspended
+        if (ctx.state === 'suspended') ctx.resume()
+
+        // Reconnect processor → destination so onaudioprocess fires again
+        const sourceNode = ctx.createMediaStreamSource(stream)
+        sourceNode.connect(processor)
+        processor.connect(ctx.destination)
+        setIsPaused(false)
+    }, [isCapturing, isPaused])
+
     const stopCapture = useCallback(() => {
         if (processorRef.current) {
             processorRef.current.disconnect()
@@ -166,14 +195,18 @@ export function useAudioCapture({
         samplesAccumRef.current = 0
         sequenceRef.current = 0
         setIsCapturing(false)
+        setIsPaused(false)
     }, [])
 
     return {
         isCapturing,
+        isPaused,
         error,
         devices,
         listDevices,
         startCapture,
+        pauseCapture,
+        resumeCapture,
         stopCapture,
     }
 }

@@ -161,13 +161,17 @@ export default function PaginaActa() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                        {!currentActa && (
+                        {currentActa?.estado !== 'aprobada' && (
                             <button
                                 onClick={generarBorrador}
                                 disabled={isGenerating}
                                 className="px-5 py-2 rounded text-xs font-semibold bg-[var(--accent-gold)] text-white hover:brightness-110 disabled:opacity-50"
                             >
-                                {isGenerating ? 'Generando con IA...' : 'Generar Borrador Inicial'}
+                                {isGenerating
+                                    ? 'Generando con IA...'
+                                    : currentActa
+                                        ? `↻ Nueva Versión (v${currentActa.version + 1})`
+                                        : 'Generar Borrador Inicial'}
                             </button>
                         )}
 
@@ -233,7 +237,14 @@ export default function PaginaActa() {
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 space-y-3">
                             {actas.map(a => (
-                                <div key={a.id} className={`p-3 rounded border text-xs cursor-default ${a.id === currentActa?.id ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-100'}`}>
+                                <div
+                                    key={a.id}
+                                    onClick={() => {
+                                        setCurrentActa(a)
+                                        setEditorContent(a.contenido_editado || a.contenido_llm || '')
+                                    }}
+                                    className={`p-3 rounded border text-xs cursor-pointer hover:brightness-95 transition-all ${a.id === currentActa?.id ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-100'}`}
+                                >
                                     <div className="flex justify-between font-semibold mb-1">
                                         <span>Versión {a.version}</span>
                                         <span className="text-[10px] uppercase text-gray-500">{a.estado}</span>

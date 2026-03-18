@@ -19,6 +19,8 @@ interface UsuarioStats {
     created_at: string
     transcripciones_count: number
     duracion_total_segundos: number
+    costo_deepgram_usd: number
+    costo_claude_usd: number
     costo_total_usd: number
 }
 
@@ -74,9 +76,12 @@ export default function AdminDashboard() {
         window.location.href = '/login'
     }
 
-    // Totales globales
-    const totalTranscripciones = usuarios.reduce((acc, u) => acc + u.transcripciones_count, 0)
-    const totalCosto = usuarios.reduce((acc, u) => acc + u.costo_total_usd, 0)
+    // Totales globales (excluir admins)
+    const noAdmins = usuarios.filter(u => u.rol !== 'admin')
+    const totalTranscripciones = noAdmins.reduce((acc, u) => acc + u.transcripciones_count, 0)
+    const totalDeepgram = noAdmins.reduce((acc, u) => acc + u.costo_deepgram_usd, 0)
+    const totalClaude = noAdmins.reduce((acc, u) => acc + u.costo_claude_usd, 0)
+    const totalCosto = totalDeepgram + totalClaude
     const totalUsuarios = usuarios.length
 
     return (
@@ -107,11 +112,12 @@ export default function AdminDashboard() {
 
                 <main className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
                     {/* Stats de Uso Global */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-10">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6 mb-10">
                         {[
-                            { label: 'Usuarios Activos', value: totalUsuarios },
-                            { label: 'Total Transcripciones', value: totalTranscripciones },
-                            { label: 'Costo Total Acumulado', value: `$${totalCosto.toFixed(2)}`, sub: 'USD' },
+                            { label: 'Usuarios', value: totalUsuarios },
+                            { label: 'Transcripciones', value: totalTranscripciones },
+                            { label: 'Costo Deepgram', value: `$${totalDeepgram.toFixed(3)}`, sub: 'USD · streaming $0.0059/min' },
+                            { label: 'Costo Claude', value: `$${totalClaude.toFixed(4)}`, sub: 'USD · tokens actas' },
                         ].map((stat) => (
                             <div key={stat.label} className="stat-card animate-fade-in" style={{ borderLeft: '4px solid var(--accent-primary)' }}>
                                 <span className="stat-card__value text-2xl sm:text-3xl">{stat.value}</span>
@@ -158,8 +164,10 @@ export default function AdminDashboard() {
                                             <th className="px-6 py-4 font-medium" style={{ color: 'var(--text-muted)' }}>Usuario</th>
                                             <th className="px-6 py-4 font-medium" style={{ color: 'var(--text-muted)' }}>Rol</th>
                                             <th className="px-6 py-4 font-medium" style={{ color: 'var(--text-muted)' }}>Estado</th>
-                                            <th className="px-6 py-4 font-medium text-center" style={{ color: 'var(--text-muted)' }}>Transcripciones</th>
-                                            <th className="px-6 py-4 font-medium text-right" style={{ color: 'var(--text-muted)' }}>Costo (USD)</th>
+                                            <th className="px-6 py-4 font-medium text-center" style={{ color: 'var(--text-muted)' }}>Transcrip.</th>
+                                            <th className="px-6 py-4 font-medium text-right hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>Deepgram</th>
+                                            <th className="px-6 py-4 font-medium text-right hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>Claude</th>
+                                            <th className="px-6 py-4 font-medium text-right" style={{ color: 'var(--text-muted)' }}>Total USD</th>
                                             <th className="px-6 py-4 font-medium text-right" style={{ color: 'var(--text-muted)' }}>Acciones</th>
                                         </tr>
                                     </thead>
@@ -190,10 +198,16 @@ export default function AdminDashboard() {
                                                     </button>
                                                 </td>
                                                 <td className="px-6 py-4 text-center font-mono" style={{ color: 'var(--text-primary)' }}>
-                                                    {u.transcripciones_count}
+                                                    {u.rol === 'admin' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : u.transcripciones_count}
+                                                </td>
+                                                <td className="px-6 py-4 text-right font-mono hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>
+                                                    {u.rol === 'admin' ? '—' : `$${u.costo_deepgram_usd.toFixed(3)}`}
+                                                </td>
+                                                <td className="px-6 py-4 text-right font-mono hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>
+                                                    {u.rol === 'admin' ? '—' : `$${u.costo_claude_usd.toFixed(4)}`}
                                                 </td>
                                                 <td className="px-6 py-4 text-right font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
-                                                    ${u.costo_total_usd.toFixed(3)}
+                                                    {u.rol === 'admin' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : `$${u.costo_total_usd.toFixed(3)}`}
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
                                                     <div className="flex justify-end gap-2">

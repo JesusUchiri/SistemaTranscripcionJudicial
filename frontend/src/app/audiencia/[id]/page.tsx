@@ -16,6 +16,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { AuthGuard } from '@/components/auth/AuthGuard'
+import { useAuthStore } from '@/stores/authStore'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useAudioCapture } from '@/hooks/useAudioCapture'
 import { useDeepgramSocket } from '@/hooks/useDeepgramSocket'
@@ -26,6 +27,7 @@ import BarraEstado from '@/components/status/BarraEstado'
 import PanelMarcadores from '@/components/markers/PanelMarcadores'
 import AtajosFrases from '@/components/shortcuts/AtajosFrases'
 import RevisionBatchPanel from '@/components/canvas/RevisionBatchPanel'
+import PanelVariables, { type VariableDeteccion } from '@/components/variables/PanelVariables'
 import api from '@/lib/api'
 import { apiBaseUrl } from '@/lib/urls'
 import type { Audiencia, Segmento } from '@/types'
@@ -59,9 +61,10 @@ export default function PaginaTranscripcion() {
     const audienciaId = params.id as string
 
     const [audiencia, setAudiencia] = useState<Audiencia | null>(null)
+    const [cargaError, setCargaError] = useState<string | null>(null)
     const [fuenteAudio, setFuenteAudio] = useState<'microphone' | 'system'>('microphone')
     const [mostrarSelector, setMostrarSelector] = useState(true)
-    const [pestanaSidebar, setPestanaSidebar] = useState<'hablantes' | 'marcadores' | 'frases'>('hablantes')
+    const [pestanaSidebar, setPestanaSidebar] = useState<'hablantes' | 'marcadores' | 'frases' | 'variables'>('hablantes')
     const [hablantesData, setHablantesData] = useState<HablanteInfo[]>([])
 
     const {
@@ -74,10 +77,29 @@ export default function PaginaTranscripcion() {
         setCurrentAudioTime,
         setConnectionStatus,
         reset,
+        varDetecciones,
+        removeVarDeteccion,
     } = useCanvasStore()
 
     const { isConnected, connect, sendAudio, stop, disconnect } = useDeepgramSocket(audienciaId)
-    const { isCapturing, startCapture, stopCapture, error: errorAudio } = useAudioCapture({
+
+    /* ── Variables handlers ──────────────────────────── */
+    const handleAceptarDeteccion = useCallback(async (det: VariableDeteccion) => {
+        if (!audiencia) return
+        const { VARIABLES_DEF } = await import('@/lib/variables')
+        const varDef = VARIABLES_DEF.find(v => v.key === det.key)
+        if (!varDef?.field) { removeVarDeteccion(det.key); return }
+        try {
+            const { data } = await api.put(`/api/audiencias/${audienciaId}`, {
+                [varDef.field]: det.valorDetectado,
+            })
+            setAudiencia(data)
+        } catch (err) {
+            console.error('Error guardando variable:', err)
+        }
+        removeVarDeteccion(det.key)
+    }, [audiencia, audienciaId, removeVarDeteccion])
+    const { isCapturing, isPaused, startCapture, pauseCapture, resumeCapture, stopCapture, error: errorAudio } = useAudioCapture({
         onAudioChunk: sendAudio,
     })
 
@@ -101,8 +123,15 @@ export default function PaginaTranscripcion() {
                 if (resSegmentos.data.length > 0 || resAudiencia.data.estado === 'transcrita' || resAudiencia.data.estado === 'finalizada') {
                     setMostrarSelector(false)
                 }
-            } catch {
-                window.location.href = '/'
+            } catch (err: any) {
+                const status = err?.response?.status
+                if (status === 401 || status === 403) {
+                    router.replace(`/login?redirect=${encodeURIComponent(window.location.pathname)}`)
+                } else if (status === 404) {
+                    router.replace('/')
+                } else {
+                    setCargaError('No se pudo conectar con el servidor. Verifica que el backend esté corriendo.')
+                }
             }
         }
         cargar()
@@ -182,6 +211,16 @@ export default function PaginaTranscripcion() {
         }, 500)
     }, [connect, startCapture, fuenteAudio, setTranscribing])
 
+    const pausarTranscripcion = useCallback(() => {
+        pauseCapture()
+        setTranscribing(false)
+    }, [pauseCapture, setTranscribing])
+
+    const reanudarTranscripcion = useCallback(() => {
+        resumeCapture()
+        setTranscribing(true)
+    }, [resumeCapture, setTranscribing])
+
     const detenerTranscripcion = useCallback(() => {
         stopCapture()
         stop()
@@ -240,10 +279,24 @@ export default function PaginaTranscripcion() {
     if (!audiencia) {
         return (
             <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
-                <div
-                    className="w-10 h-10 border-3 rounded-full animate-spin"
-                    style={{ borderColor: 'var(--accent-gold)', borderTopColor: 'transparent' }}
-                />
+                {cargaError ? (
+                    <div className="text-center max-w-sm px-6">
+                        <p className="text-sm font-medium mb-2" style={{ color: 'var(--danger)' }}>Error de conexión</p>
+                        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>{cargaError}</p>
+                        <button
+                            onClick={() => router.replace('/')}
+                            className="text-xs px-4 py-2 rounded-lg"
+                            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                        >
+                            ← Volver al inicio
+                        </button>
+                    </div>
+                ) : (
+                    <div
+                        className="w-10 h-10 border-3 rounded-full animate-spin"
+                        style={{ borderColor: 'var(--accent-gold)', borderTopColor: 'transparent' }}
+                    />
+                )}
             </div>
         )
     }
@@ -335,7 +388,7 @@ export default function PaginaTranscripcion() {
 
             <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
                 {/* ── Canvas (Main Area) ────────────────────────── */}
-                <div className="flex-1 flex flex-col min-w-0">
+                <div className="flex-1 flex flex-col min-w-0 min-h-0">
                     {/* Audio source selector */}
                     {mostrarSelector && !isTranscribing && (
                         <div
@@ -379,33 +432,71 @@ export default function PaginaTranscripcion() {
                     )}
 
                     {/* Recording controls */}
-                    {isTranscribing && (
+                    {(isTranscribing || isPaused) && (
                         <div
                             className="px-4 sm:px-6 py-3 flex items-center justify-between gap-4 shrink-0"
                             style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}
                         >
                             <div className="flex items-center gap-2">
-                                <span className="w-2 h-2 sm:w-3 sm:h-3 rounded-full animate-pulse" style={{ background: 'var(--danger)' }} />
-                                <span className="text-xs font-medium" style={{ color: 'var(--danger)' }}>
-                                    Grabando...
-                                </span>
+                                {isPaused ? (
+                                    <>
+                                        <span className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm" style={{ background: '#F59E0B' }} />
+                                        <span className="text-xs font-medium" style={{ color: '#F59E0B' }}>
+                                            Pausado
+                                        </span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="w-2 h-2 sm:w-3 sm:h-3 rounded-full animate-pulse" style={{ background: 'var(--danger)' }} />
+                                        <span className="text-xs font-medium" style={{ color: 'var(--danger)' }}>
+                                            Grabando...
+                                        </span>
+                                    </>
+                                )}
                             </div>
-                            <button
-                                onClick={detenerTranscripcion}
-                                className="px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all"
-                                style={{
-                                    background: 'rgba(230, 57, 70, 0.15)',
-                                    color: 'var(--danger)',
-                                    border: '1px solid rgba(230, 57, 70, 0.3)',
-                                }}
-                            >
-                                Detener
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {isPaused ? (
+                                    <button
+                                        onClick={reanudarTranscripcion}
+                                        className="px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all"
+                                        style={{
+                                            background: 'rgba(34, 197, 94, 0.15)',
+                                            color: '#22C55E',
+                                            border: '1px solid rgba(34, 197, 94, 0.3)',
+                                        }}
+                                    >
+                                        ▶ Reanudar
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={pausarTranscripcion}
+                                        className="px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all"
+                                        style={{
+                                            background: 'rgba(245, 158, 11, 0.15)',
+                                            color: '#F59E0B',
+                                            border: '1px solid rgba(245, 158, 11, 0.3)',
+                                        }}
+                                    >
+                                        ⏸ Pausar
+                                    </button>
+                                )}
+                                <button
+                                    onClick={detenerTranscripcion}
+                                    className="px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all"
+                                    style={{
+                                        background: 'rgba(230, 57, 70, 0.15)',
+                                        color: 'var(--danger)',
+                                        border: '1px solid rgba(230, 57, 70, 0.3)',
+                                    }}
+                                >
+                                    ■ Detener
+                                </button>
+                            </div>
                         </div>
                     )}
 
                     {/* Canvas TipTap */}
-                    <div className="flex-1 overflow-hidden relative flex flex-col">
+                    <div className="flex-1 relative flex flex-col min-h-0">
                         <RevisionBatchPanel 
                             segmentos={segments} 
                             onAceptar={handleAceptarBatch} 
@@ -440,6 +531,7 @@ export default function PaginaTranscripcion() {
                             { id: 'hablantes' as const, label: 'Hablantes' },
                             { id: 'marcadores' as const, label: 'Marcadores' },
                             { id: 'frases' as const, label: 'Frases' },
+                            { id: 'variables' as const, label: varDetecciones.length > 0 ? `Vars ${varDetecciones.length}` : 'Vars' },
                         ]).map(tab => (
                             <button
                                 key={tab.id}
@@ -523,6 +615,16 @@ export default function PaginaTranscripcion() {
                             <AtajosFrases
                                 onInsertarFrase={insertarFraseEnCanvas}
                                 habilitado={true}
+                            />
+                        )}
+                        {pestanaSidebar === 'variables' && audiencia && (
+                            <PanelVariables
+                                audiencia={audiencia}
+                                hablantes={hablantesData}
+                                detecciones={varDetecciones}
+                                onAceptarDeteccion={handleAceptarDeteccion}
+                                onRechazarDeteccion={removeVarDeteccion}
+                                onAudienciaActualizada={setAudiencia}
                             />
                         )}
                     </div>

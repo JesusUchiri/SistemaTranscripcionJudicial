@@ -375,11 +375,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         },
         getEditor: () => editor,
         scrollToEnd: () => {
-            if (editor) {
-                const el = editor.view.dom
-                el.scrollTop = el.scrollHeight
-                autoScrollRef.current = true
-            }
+            autoScrollRef.current = true
+            containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight })
         },
         scrollToSegment: (segmentId: string) => {
             if (editor) {
@@ -461,27 +458,24 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
             htmlParts.push(`<span class="${segmentClasses.join(' ')}" data-segment-id="${seg.id}" data-timestamp="${timestamp}" data-edited="${isEdited}">${segmentHtml}</span>`)
         })
 
-        // Insertar contenido inline (sin envolver en párrafos innecesarios)
+        // focus('end') con scrollIntoView:false posiciona el cursor al final
+        // sin que TipTap haga su propio scroll (lo manejamos nosotros abajo)
         const html = htmlParts.join('')
-        editor.chain().focus('end').insertContent(html).run()
+        editor.chain().focus('end', { scrollIntoView: false }).insertContent(html).run()
 
-        // Auto-scroll: During streaming (few new segments), scroll to bottom.
+        // Auto-scroll: During streaming, scroll to bottom after DOM update.
         // During initial bulk load (many segments at once), scroll to top.
         const isBulkLoad = prevCount === 0 && nuevos.length > 5
-        if (containerRef.current) {
-            requestAnimationFrame(() => {
-                const pageArea = containerRef.current
-                if (pageArea) {
-                    if (isBulkLoad) {
-                        // Initial load from DB — show the beginning of the document
-                        pageArea.scrollTop = 0
-                    } else if (autoScrollRef.current) {
-                        // Live streaming — follow new content
-                        pageArea.scrollTop = pageArea.scrollHeight
-                    }
-                }
-            })
-        }
+        // Double-rAF: primer frame TipTap commitea el DOM, segundo frame el browser recalcula layout
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            const el = containerRef.current
+            if (!el) return
+            if (isBulkLoad) {
+                el.scrollTop = 0
+            } else if (autoScrollRef.current) {
+                el.scrollTop = el.scrollHeight
+            }
+        }))
     }, [editor, segments, editedSegmentIds, getSpeakerInfo])
 
     /* ── Active segment highlighting during playback ── */
@@ -527,17 +521,17 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 }).join(' ')
             }
 
-            editor.chain().focus('end').setProvisional({
+            editor.chain().focus('end', { scrollIntoView: false }).setProvisional({
                 text: displayText,
                 speakerId: provisionalSpeaker || 'SPEAKER_00',
-                color: color
+                color: color,
             }).run()
 
-            if (autoScrollRef.current && containerRef.current) {
-                requestAnimationFrame(() => {
-                    const pageArea = containerRef.current
-                    if (pageArea) pageArea.scrollTop = pageArea.scrollHeight
-                })
+            if (autoScrollRef.current) {
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    const el = containerRef.current
+                    if (el) el.scrollTop = el.scrollHeight
+                }))
             }
         }
     }, [editor, provisionalText, provisionalSpeaker, provisionalWords, getSpeakerInfo])
@@ -562,11 +556,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         const handler = (e: KeyboardEvent) => {
             if (e.ctrlKey && e.key === 'j') {
                 e.preventDefault()
-                const pageArea = containerRef.current
-                if (pageArea) {
-                    pageArea.scrollTop = pageArea.scrollHeight
-                    autoScrollRef.current = true
-                }
+                autoScrollRef.current = true
+                containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight })
             }
         }
         window.addEventListener('keydown', handler)
@@ -611,7 +602,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
     })
 
     return (
-        <div ref={containerRef} className="canvas-page-area">
+        <div ref={containerRef} className="canvas-scroll-area">
+        <div className="canvas-page-area">
             <div className="canvas-document">
                 {/* Document header — mimics official PJ header */}
                 <div className="canvas-document__header">
@@ -650,11 +642,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 {!autoScrollRef.current && segments.length > 3 && (
                     <button
                         onClick={() => {
-                            const pageArea = containerRef.current
-                            if (pageArea) {
-                                pageArea.scrollTop = pageArea.scrollHeight
-                                autoScrollRef.current = true
-                            }
+                            autoScrollRef.current = true
+                            containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight })
                         }}
                         className="fixed bottom-20 right-[30%] px-3 py-1.5 rounded-full text-xs z-10 transition-all hover:brightness-110"
                         style={{
@@ -667,6 +656,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                     </button>
                 )}
             </div>
+        </div>
         </div>
     )
 })

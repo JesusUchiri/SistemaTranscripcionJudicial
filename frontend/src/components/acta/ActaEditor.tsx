@@ -2,10 +2,6 @@
 
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
-import Heading from '@tiptap/extension-heading'
-import Paragraph from '@tiptap/extension-paragraph'
-import Document from '@tiptap/extension-document'
-import Text from '@tiptap/extension-text'
 import { useEffect } from 'react'
 
 interface ActaEditorProps {
@@ -17,11 +13,9 @@ interface ActaEditorProps {
 export default function ActaEditor({ initialContent, onChange, editable = true }: ActaEditorProps) {
     const editor = useEditor({
         extensions: [
-            StarterKit,
-            Document,
-            Paragraph,
-            Text,
-            Heading.configure({ levels: [1, 2, 3] }),
+            StarterKit.configure({
+                heading: { levels: [1, 2, 3] },
+            }),
         ],
         content: initialContent,
         immediatelyRender: false,
