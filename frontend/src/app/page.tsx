@@ -28,8 +28,12 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
+        if (user?.rol === 'admin') {
+            router.replace('/admin')
+            return
+        }
         fetchAudiencias()
-    }, [])
+    }, [user, router])
 
     // Refrescar lista al volver a la pestaña (p. ej. después de grabar)
     useEffect(() => {
@@ -65,7 +69,7 @@ export default function DashboardPage() {
 
     const handleLogout = () => {
         logout()
-        router.push('/login')
+        window.location.href = '/login'
     }
 
     return (
@@ -73,7 +77,7 @@ export default function DashboardPage() {
             <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
                 {/* Header */}
                 <header className="px-4 sm:px-8 py-4 sm:py-6 flex flex-col sm:flex-row items-center justify-between gap-4"
-                    style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-surface)' }}>
                     <div className="flex items-center gap-4">
                         <div className="logo-monogram shrink-0">J</div>
                         <div>
@@ -83,19 +87,28 @@ export default function DashboardPage() {
                             <p className="text-xs sm:text-sm" style={{ color: 'var(--text-muted)' }}>Sistema de Transcripción Judicial</p>
                         </div>
                     </div>
+                    
                     <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
                         <div className="text-right hidden sm:block">
                             <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user?.nombre}</p>
                             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{user?.rol}</p>
                         </div>
                         <div className="flex gap-2 w-full sm:w-auto">
+                            {user?.rol === 'admin' && (
+                                <button
+                                    onClick={() => window.location.href = '/admin'}
+                                    className="btn-primary"
+                                    style={{ background: 'var(--accent-primary)', color: 'white' }}>
+                                    Panel Admin
+                                </button>
+                            )}
                             <button
-                                onClick={() => router.push('/transcribir')}
+                                onClick={() => window.location.href = '/transcribir'}
                                 className="btn-secondary flex-1 sm:flex-initial">
                                 Subir audio
                             </button>
                             <button
-                                onClick={() => router.push('/audiencia/demo')}
+                                onClick={() => window.location.href = '/audiencia/demo'}
                                 className="btn-primary flex-1 sm:flex-initial">
                                 Iniciar
                             </button>
@@ -136,7 +149,7 @@ export default function DashboardPage() {
                                 Actualizar
                             </button>
                             <button
-                                onClick={() => router.push('/audiencia/nueva')}
+                                onClick={() => window.location.href = '/audiencia/nueva'}
                                 className="btn-secondary">
                                 <span style={{ fontSize: '16px', fontWeight: 300 }}>+</span>
                                 Nueva sesión
@@ -154,16 +167,10 @@ export default function DashboardPage() {
                     ) : audiencias.length === 0 ? (
                         <div className="rounded-2xl p-8 sm:p-16 text-center"
                             style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}>
-                            {/* Líneas minimalistas como empty state */}
-                            <div className="empty-state-lines mb-6">
-                                <span></span>
-                                <span></span>
-                                <span></span>
-                            </div>
                             <p className="text-base font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Aún no tienes sesiones de grabación</p>
-                            <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>Crea una nueva sesión para grabar y transcribir. Varias personas pueden usar el sistema; cada una verá sus propias grabaciones.</p>
+                            <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>Crea una nueva sesión para grabar y transcribir.</p>
                             <button
-                                onClick={() => router.push('/audiencia/nueva')}
+                                onClick={() => window.location.href = '/audiencia/nueva'}
                                 className="btn-primary">
                                 Nueva sesión de grabación
                             </button>
@@ -173,7 +180,7 @@ export default function DashboardPage() {
                             style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
                             <table className="w-full text-sm min-w-[600px]">
                                 <thead>
-                                    <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}>
                                         {['Expediente', 'Tipo', 'Juzgado', 'Fecha', 'Creada', 'Estado', ''].map((h) => (
                                             <th key={h} className="text-left px-5 py-3.5 text-xs font-medium uppercase tracking-wider"
                                                 style={{ color: 'var(--text-muted)' }}>
@@ -190,9 +197,9 @@ export default function DashboardPage() {
                                             : '—'
                                         return (
                                             <tr key={a.id}
-                                                className="cursor-pointer transition-colors hover:brightness-110"
+                                                className="cursor-pointer transition-colors hover:bg-black/5"
                                                 style={{ borderBottom: '1px solid var(--border-subtle)' }}
-                                                onClick={() => router.push(`/audiencia/${a.id}`)}>
+                                                onClick={() => window.location.href = `/audiencia/${a.id}`}>
                                                 <td className="px-5 py-4 font-medium" style={{ color: 'var(--text-primary)' }}>
                                                     {a.expediente}
                                                 </td>

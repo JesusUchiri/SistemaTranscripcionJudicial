@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 from deepgram import AsyncDeepgramClient
+from deepgram.core.request_options import RequestOptions
 
 class DeepgramBatchService:
     """
@@ -74,6 +75,7 @@ class DeepgramBatchService:
             paragraphs=True,
             utterances=True,
             detect_language=False,
+            request_options=RequestOptions(timeout_in_seconds=1800),  # 30 min
         )
 
         

@@ -9,7 +9,6 @@ from collections import Counter
 from typing import Callable, Optional, List, Dict, Any, Awaitable
 
 from deepgram import AsyncDeepgramClient
-from deepgram.core.events import EventType
 
 from app.config import settings
 
@@ -131,7 +130,8 @@ class DeepgramStreamingService:
         elif msg_type == "Metadata":
             logger.info(f"[DG] Metadata received: {data}")
         else:
-            logger.debug(f"[DG] Unknown message type: '{msg_type}', data: {str(data)[:200]}")
+            data_str = str(data)[:200]
+            logger.debug(f"[DG] Unknown message type: '{msg_type}', data: {data_str}")
 
     async def send_audio(self, audio_data: bytes) -> None:
         """Send raw PCM audio chunk to Deepgram SDK."""

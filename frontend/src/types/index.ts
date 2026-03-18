@@ -132,28 +132,31 @@ export type WSMessage = TranscriptMessage | StatusMessage | SuggestionMessage
 // ── Speaker Roles ─────────────────────────────────────
 export interface SpeakerRole {
     id: number
+    /** Clave exacta que el backend acepta (Enum rol_hablante) */
+    key: string
+    /** Nombre legible para mostrar en la UI */
     rol: string
     etiqueta: string
     color: string
 }
 
-// Colores optimizados para tema claro
+// key DEBE coincidir exactamente con el Enum "rol_hablante" en backend/models/hablante.py
 export const SPEAKER_ROLES: SpeakerRole[] = [
-    { id: 1, rol: 'Juez', etiqueta: 'JUEZ:', color: '#2563EB' },
-    { id: 2, rol: 'Juez Director de Debates', etiqueta: 'JUEZ SUPERIOR – DIRECTOR DE DEBATES:', color: '#1D4ED8' },
-    { id: 3, rol: 'Jueces del Colegiado', etiqueta: 'JUECES SUPERIORES:', color: '#3B82F6' },
-    { id: 4, rol: 'Fiscal', etiqueta: 'REPRESENTANTE DEL MINISTERIO PÚBLICO:', color: '#059669' },
-    { id: 5, rol: 'Defensa del imputado', etiqueta: 'DEFENSA DEL SENTENCIADO (A):', color: '#DC2626' },
-    { id: 6, rol: 'Defensa del agraviado', etiqueta: 'DEFENSA DE LA PARTE AGRAVIADA:', color: '#EA580C' },
-    { id: 7, rol: 'Imputado/Acusado', etiqueta: 'IMPUTADO:', color: '#D97706' },
-    { id: 8, rol: 'Agraviado/Víctima', etiqueta: 'AGRAVIADO:', color: '#7C3AED' },
-    { id: 9, rol: 'Víctima', etiqueta: 'VÍCTIMA:', color: '#8B5CF6' },
-    { id: 10, rol: 'Asesor de Víctimas', etiqueta: 'ASESOR JURÍDICO DE VÍCTIMAS:', color: '#BE185D' },
-    { id: 11, rol: 'Perito', etiqueta: 'PERITO:', color: '#0891B2' },
-    { id: 12, rol: 'Testigo', etiqueta: 'TESTIGO:', color: '#16A34A' },
-    { id: 13, rol: 'Asistente/Especialista', etiqueta: 'ASISTENTE DE AUDIENCIA:', color: '#64748B' },
-    { id: 14, rol: 'Partes en general', etiqueta: 'PARTES PROCESALES:', color: '#78716C' },
-    { id: 15, rol: 'Otro', etiqueta: 'OTRO:', color: '#6B7280' },
+    { id: 1,  key: 'juez',              rol: 'Juez',                    etiqueta: 'JUEZ:',                                            color: '#2563EB' },
+    { id: 2,  key: 'juez_director',     rol: 'Juez Director de Debates', etiqueta: 'JUEZ SUPERIOR – DIRECTOR DE DEBATES:',             color: '#1D4ED8' },
+    { id: 3,  key: 'jueces_colegiado',  rol: 'Jueces del Colegiado',    etiqueta: 'JUECES SUPERIORES:',                               color: '#3B82F6' },
+    { id: 4,  key: 'fiscal',            rol: 'Fiscal',                  etiqueta: 'REPRESENTANTE DEL MINISTERIO PÚBLICO:',             color: '#059669' },
+    { id: 5,  key: 'defensa_imputado',  rol: 'Defensa del imputado',    etiqueta: 'DEFENSA DEL SENTENCIADO (A):',                      color: '#DC2626' },
+    { id: 6,  key: 'defensa_agraviado', rol: 'Defensa del agraviado',   etiqueta: 'DEFENSA DE LA PARTE AGRAVIADA:',                    color: '#EA580C' },
+    { id: 7,  key: 'imputado',          rol: 'Imputado/Acusado',        etiqueta: 'IMPUTADO:',                                         color: '#D97706' },
+    { id: 8,  key: 'agraviado',         rol: 'Agraviado/Víctima',       etiqueta: 'AGRAVIADO:',                                        color: '#7C3AED' },
+    { id: 9,  key: 'victima',           rol: 'Víctima',                 etiqueta: 'VÍCTIMA:',                                          color: '#8B5CF6' },
+    { id: 10, key: 'asesor_victimas',   rol: 'Asesor de Víctimas',      etiqueta: 'ASESOR JURÍDICO DE VÍCTIMAS:',                      color: '#BE185D' },
+    { id: 11, key: 'perito',            rol: 'Perito',                  etiqueta: 'PERITO:',                                            color: '#0891B2' },
+    { id: 12, key: 'testigo',           rol: 'Testigo',                 etiqueta: 'TESTIGO:',                                           color: '#16A34A' },
+    { id: 13, key: 'asistente',         rol: 'Asistente/Especialista',  etiqueta: 'ASISTENTE DE AUDIENCIA:',                            color: '#64748B' },
+    { id: 14, key: 'partes_general',    rol: 'Partes en general',       etiqueta: 'PARTES PROCESALES:',                                 color: '#78716C' },
+    { id: 15, key: 'otro',              rol: 'Otro',                    etiqueta: 'OTRO:',                                              color: '#6B7280' },
 ]
 
 // ── Acta ──────────────────────────────────────────────

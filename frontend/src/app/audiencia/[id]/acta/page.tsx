@@ -49,8 +49,9 @@ export default function PaginaActa() {
     const generarBorrador = async () => {
         setIsGenerating(true)
         try {
+            const formato = audiencia?.instancia === 'sala_apelaciones' ? 'B' : 'A'
             await api.post(`/api/audiencias/${audienciaId}/actas/generar`, {
-                formato: 'A' // u otro basado en la audiencia
+                formato: formato
             })
             await fetchAudienciaYActas()
         } catch (error) {
@@ -145,7 +146,7 @@ export default function PaginaActa() {
                 <header className="flex items-center justify-between px-6 py-4 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)] shrink-0 z-10 sticky top-0">
                     <div className="flex items-center gap-4">
                         <button
-                            onClick={() => router.push(`/audiencia/${audienciaId}`)}
+                            onClick={() => window.location.href = `/audiencia/${audienciaId}`}
                             className="text-xs px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:brightness-110 text-[var(--text-muted)] transition-all"
                         >
                             ← Volver

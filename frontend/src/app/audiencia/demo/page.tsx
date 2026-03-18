@@ -163,7 +163,7 @@ export default function DemoCanvasPage() {
             <header className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 shrink-0 gap-4"
                 style={{ borderBottom: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
                 <div className="flex items-center gap-5 w-full sm:w-auto">
-                    <button onClick={() => router.push('/')} className="btn-secondary text-[10px] shrink-0">
+                    <button onClick={() => window.location.href = '/'} className="btn-secondary text-[10px] shrink-0">
                         ← Volver
                     </button>
                     <div className="overflow-hidden">

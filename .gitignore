@@ -41,3 +41,6 @@ audio_files/
 # Misc
 *.log
 .cache/
+
+# Ejemplos de audio (pesados)
+Audiencias Ejemplo/

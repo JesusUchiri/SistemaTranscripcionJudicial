@@ -91,19 +91,23 @@ export default function PanelHablantes({
                 }))
                 setHablantes(prev => [...prev, ...nuevosHablantes])
             } else {
-                // Modo API: POST
+                // Modo API: POST — ignorar 409 (ya existe)
                 Promise.all(
                     nuevos.map((speakerId, idx) =>
                         api.post(`/api/audiencias/${audienciaId}/hablantes`, {
                             speaker_id: speakerId,
                             rol: 'otro',
                             orden: hablantes.length + idx,
+                        }).catch((err) => {
+                            if (err?.response?.status !== 409) throw err
+                            // 409 = ya existe, no es error
                         })
                     )
                 ).then(() => cargarHablantes())
             }
         }
-    }, [speakersDetectados, hablantes, audienciaId, modoDemo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [speakersDetectados, audienciaId, modoDemo])
 
     const cargarHablantes = async () => {
         try {
@@ -117,9 +121,22 @@ export default function PanelHablantes({
 
     const actualizarRol = async (hablanteId: string, nuevoRol: string) => {
         if (modoDemo) {
-            setHablantes(prev => prev.map(h =>
-                h.id === hablanteId ? { ...h, rol: nuevoRol, etiqueta: nuevoRol.toUpperCase() } : h
-            ))
+            const rolConfig = SPEAKER_ROLES.find(r => r.key === nuevoRol)
+            setHablantes(prev => {
+                const updated = prev.map(h =>
+                    h.id === hablanteId
+                        ? {
+                            ...h,
+                            rol: nuevoRol,
+                            etiqueta: rolConfig?.etiqueta || nuevoRol.toUpperCase(),
+                            color: rolConfig?.color || h.color,
+                        }
+                        : h
+                )
+                const changed = updated.find(h => h.id === hablanteId)
+                if (changed) onHablanteActualizado?.(changed)
+                return updated
+            })
             return
         }
 
@@ -143,9 +160,14 @@ export default function PanelHablantes({
 
     const actualizarNombre = async (hablanteId: string, nombre: string) => {
         if (modoDemo) {
-            setHablantes(prev => prev.map(h =>
-                h.id === hablanteId ? { ...h, nombre } : h
-            ))
+            setHablantes(prev => {
+                const updated = prev.map(h =>
+                    h.id === hablanteId ? { ...h, nombre } : h
+                )
+                const changed = updated.find(h => h.id === hablanteId)
+                if (changed) onHablanteActualizado?.(changed)
+                return updated
+            })
             return
         }
 
@@ -157,6 +179,7 @@ export default function PanelHablantes({
             setHablantes((prev) =>
                 prev.map((h) => (h.id === hablanteId ? data : h))
             )
+            onHablanteActualizado?.(data)
         } catch (err) {
             console.error('Error actualizando nombre:', err)
         }
@@ -241,7 +264,7 @@ export default function PanelHablantes({
                                     }}
                                 >
                                     {SPEAKER_ROLES.map((rol) => (
-                                        <option key={rol.id} value={rol.rol.toLowerCase().replace(/ /g, '_')}>
+                                        <option key={rol.id} value={rol.key}>
                                             {rol.rol.toUpperCase()}
                                         </option>
                                     ))}

@@ -14,8 +14,12 @@ function LoginForm() {
     // Redirigir si ya está autenticado
     useEffect(() => {
         if (user) {
-            const redirect = searchParams.get('redirect') || '/'
-            router.push(redirect)
+            if (user.rol === 'admin') {
+                router.replace('/admin')
+            } else {
+                const redirect = searchParams.get('redirect') || '/'
+                router.push(redirect)
+            }
         }
     }, [user, router, searchParams])
 
@@ -23,8 +27,16 @@ function LoginForm() {
         e.preventDefault()
         const success = await login({ email, password })
         if (success) {
-            const redirect = searchParams.get('redirect') || '/'
-            router.push(redirect)
+            // El store ya cargó al usuario antes de devolver success: true
+            const userState = useAuthStore.getState()
+            const currentUser = userState.user
+            
+            if (currentUser?.rol === 'admin') {
+                router.replace('/admin')
+            } else {
+                const redirect = searchParams.get('redirect') || '/'
+                router.push(redirect)
+            }
         }
     }
 

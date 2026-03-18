@@ -33,44 +33,41 @@ Tu tarea es generar el ACTA DE AUDIENCIA oficial a partir de la transcripción p
 
 ## FORMATO A — JUZGADO PENAL UNIPERSONAL
 
-El acta debe seguir estrictamente esta estructura:
+El acta debe seguir estrictamente esta estructura y ser generada en formato HTML semántico:
 
 ---
+<h1>CORTE SUPERIOR DE JUSTICIA DE CUSCO</h1>
+<h2>{juzgado}</h2>
 
-CORTE SUPERIOR DE JUSTICIA DE CUSCO
-{juzgado}
+<h3>ACTA DE REGISTRO DE AUDIENCIA DE {tipo_audiencia}</h3>
 
-ACTA DE REGISTRO DE AUDIENCIA DE {tipo_audiencia}
+<p><strong>EXPEDIENTE:</strong> {expediente}</p>
+<p><strong>ESPECIALISTA:</strong> {especialista}</p>
+<p><strong>IMPUTADO:</strong> {imputado}</p>
+<p><strong>AGRAVIADO:</strong> {agraviado}</p>
+<p><strong>DELITO:</strong> {delito}</p>
 
-EXPEDIENTE     : {expediente}
-ESPECIALISTA   : {especialista}
-IMPUTADO       : {imputado}
-AGRAVIADO      : {agraviado}
-DELITO         : {delito}
+<p>En la ciudad de Cusco, siendo las {hora_inicio} horas del día {fecha}, en la Sala de Audiencias del {juzgado}, se da inicio a la audiencia de {tipo_audiencia}.</p>
 
-En la ciudad de Cusco, siendo las {hora_inicio} horas del día {fecha}, en la Sala de Audiencias del {juzgado}, se da inicio a la audiencia de {tipo_audiencia}.
+<h3>DESARROLLO DE LA AUDIENCIA:</h3>
 
-DESARROLLO DE LA AUDIENCIA:
+[Aquí insertar el contenido de la transcripción formateado como acta formal, usando etiquetas <p> para párrafos y <strong> para los nombres de los hablantes al inicio de cada intervención]
 
-[Aquí insertar el contenido de la transcripción formateado como acta formal]
+<h3>DECISIÓN:</h3>
 
-DECISIÓN:
+[Extraer la decisión o resolución si la hay, usando etiquetas de párrafo]
 
-[Extraer la decisión o resolución si la hay]
-
-Con lo que concluyó la audiencia, siendo las {hora_fin} horas del mismo día, firmando los que en ella intervinieron.
-
+<p>Con lo que concluyó la audiencia, siendo las {hora_fin} horas del mismo día, firmando los que en ella intervinieron.</p>
 ---
 
-## REGLAS:
-1. Mantener TODA la información de la transcripción, no omitir contenido
-2. Usar formato formal de acta judicial peruana
-3. Identificar las intervenciones por el rol del hablante (JUEZ:, FISCAL:, DEFENSA:, etc.)
-4. Corregir ortografía y puntuación sin cambiar el sentido
-5. No inventar información que no esté en la transcripción
-6. Usar mayúsculas para títulos, cargos e instituciones
-7. Numerar los puntos de la audiencia si corresponde
-8. Mantener las citas textuales de las declaraciones
+## REGLAS CRÍTICAS:
+1. Generar la respuesta ÚNICAMENTE en código HTML semántico válido (usar <h1>, <h2>, <h3>, <p>, <strong>, <ul>, <li>).
+2. NO incluir etiquetas <html>, <head> ni <body>. Solo el fragmento de contenido.
+3. Mantener TODA la información de la transcripción, no omitir contenido.
+4. Identificar las intervenciones por el rol del hablante en negrita (ej: <p><strong>JUEZ:</strong> Texto...</p>).
+5. Corregir ortografía y puntuación sin cambiar el sentido jurídico.
+6. NO inventar información que no esté en la transcripción.
+7. Usar mayúsculas para títulos, cargos e instituciones según el estilo judicial.
 
 ## DATOS DE LA AUDIENCIA:
 {metadatos}
@@ -81,56 +78,56 @@ Con lo que concluyó la audiencia, siendo las {hora_fin} horas del mismo día, f
 ## TRANSCRIPCIÓN COMPLETA:
 {transcripcion}
 
-Genera el acta completa en formato texto plano. NO uses markdown."""
+Genera el acta completa en formato HTML."""
 
 
 PROMPT_FORMATO_B = """Eres un digitador judicial experto del Poder Judicial del Perú, Distrito Judicial de Cusco.
 
-Tu tarea es generar el ACTA DE AUDIENCIA oficial a partir de la transcripción proporcionada.
+Tu tarea es generar el ACTA DE AUDIENCIA oficial a partir de la transcripción proporcionada en formato HTML semántico.
 
 ## FORMATO B — SALA PENAL DE APELACIONES (COLEGIADO)
 
 El acta debe seguir estrictamente esta estructura:
 
 ---
+<h1>CORTE SUPERIOR DE JUSTICIA DE CUSCO</h1>
+<h2>SALA PENAL DE APELACIONES Y LIQUIDADORA DE CUSCO I</h2>
 
-CORTE SUPERIOR DE JUSTICIA DE CUSCO
-SALA PENAL DE APELACIONES Y LIQUIDADORA DE CUSCO I
+<h3>ACTA DE REGISTRO DE AUDIENCIA DE {tipo_audiencia}</h3>
 
-ACTA DE REGISTRO DE AUDIENCIA DE {tipo_audiencia}
+<p><strong>EXPEDIENTE:</strong> {expediente}</p>
+<p><strong>ESPECIALISTA:</strong> {especialista}</p>
+<p><strong>IMPUTADO:</strong> {imputado}</p>
+<p><strong>AGRAVIADO:</strong> {agraviado}</p>
+<p><strong>DELITO:</strong> {delito}</p>
 
-EXPEDIENTE     : {expediente}
-ESPECIALISTA   : {especialista}
-IMPUTADO       : {imputado}
-AGRAVIADO      : {agraviado}
-DELITO         : {delito}
+<p>En la ciudad de Cusco, siendo las {hora_inicio} horas del día {fecha}, en la Sala de Audiencias de la Sala Penal de Apelaciones, ante los Señores Jueces Superiores conformantes del Colegiado, se da inicio a la audiencia de {tipo_audiencia}.</p>
 
-En la ciudad de Cusco, siendo las {hora_inicio} horas del día {fecha}, en la Sala de Audiencias de la Sala Penal de Apelaciones, ante los Señores Jueces Superiores conformantes del Colegiado, se da inicio a la audiencia de {tipo_audiencia}.
+<h3>JUECES SUPERIORES:</h3>
+<ul>
+  <li>Juez Superior Director de Debates: [Nombre]</li>
+  <li>Juez Superior: [Nombre]</li>
+  <li>Juez Superior: [Nombre]</li>
+</ul>
 
-JUECES SUPERIORES:
-- Juez Superior Director de Debates: [Nombre]
-- Juez Superior: [Nombre]
-- Juez Superior: [Nombre]
+<h3>DESARROLLO DE LA AUDIENCIA:</h3>
 
-DESARROLLO DE LA AUDIENCIA:
+[Contenido formateado con <p> y <strong> para hablantes]
 
-[Contenido formateado]
-
-DECISIÓN DEL COLEGIADO:
+<h3>DECISIÓN DEL COLEGIADO:</h3>
 
 [Extraer la decisión]
 
-Con lo que concluyó la audiencia, siendo las {hora_fin} horas del mismo día, firmando los que en ella intervinieron.
-
+<p>Con lo que concluyó la audiencia, siendo las {hora_fin} horas del mismo día, firmando los que en ella intervinieron.</p>
 ---
 
-## REGLAS:
-1. Mantener TODA la información de la transcripción
-2. Formato formal de acta de Sala de Apelaciones
-3. Identificar las intervenciones por rol
-4. Respetar la estructura colegiada (3 jueces)
-5. No inventar información
-6. Usar mayúsculas para títulos, cargos e instituciones
+## REGLAS CRÍTICAS:
+1. Generar la respuesta ÚNICAMENTE en código HTML semántico válido.
+2. NO incluir etiquetas de estructura de documento completa (<html>, <body>), solo el fragmento.
+3. Mantener TODA la información de la transcripción.
+4. Respetar la estructura colegiada (3 jueces).
+5. Identificar las intervenciones por rol en negrita (ej: <p><strong>JUEZ SUPERIOR - DIRECTOR DE DEBATES:</strong> Texto...</p>).
+6. No inventar información.
 
 ## DATOS DE LA AUDIENCIA:
 {metadatos}
@@ -141,7 +138,7 @@ Con lo que concluyó la audiencia, siendo las {hora_fin} horas del mismo día, f
 ## TRANSCRIPCIÓN COMPLETA:
 {transcripcion}
 
-Genera el acta completa en formato texto plano. NO uses markdown."""
+Genera el acta completa en formato HTML."""
 
 
 async def generar_acta(
@@ -255,7 +252,7 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=settings.ANTHROPIC_MODEL,
             max_tokens=8000,
             temperature=0.2,
             messages=[{"role": "user", "content": prompt}],
@@ -285,7 +282,7 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         estado="borrador",
         contenido_llm=contenido_llm,
         prompt_utilizado=prompt[:2000],  # Guardar inicio del prompt para referencia
-        modelo_llm="claude-sonnet-4-20250514",
+        modelo_llm=settings.ANTHROPIC_MODEL,
         tokens_used=tokens_used,
         confianza=0.9,
         generado_por=usuario_id,

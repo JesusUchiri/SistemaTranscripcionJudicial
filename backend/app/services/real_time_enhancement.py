@@ -79,7 +79,7 @@ Responde SOLO con un JSON válido (sin markdown):
 }}"""
 
             message = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=settings.ANTHROPIC_MODEL,
                 max_tokens=200,
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
@@ -142,7 +142,7 @@ Responde SOLO con un JSON válido (sin markdown):
 
             # Llamar a Claude con streaming desactivado para respuesta rápida
             message = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=settings.ANTHROPIC_MODEL,
                 max_tokens=500,
                 temperature=0.3,  # Baja temperatura para consistencia
                 messages=[

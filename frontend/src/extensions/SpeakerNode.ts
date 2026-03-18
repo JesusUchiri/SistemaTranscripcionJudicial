@@ -37,12 +37,15 @@ const SpeakerNode = Node.create<SpeakerNodeOptions>({
         return {
             speakerId: {
                 default: null,
+                parseHTML: element => element.getAttribute('speakerId') || element.getAttribute('data-speaker-id'),
             },
             label: {
                 default: 'Speaker',
+                parseHTML: element => element.getAttribute('label'),
             },
             color: {
                 default: '#2563EB',
+                parseHTML: element => element.getAttribute('color'),
             },
         }
     },
@@ -62,6 +65,8 @@ const SpeakerNode = Node.create<SpeakerNodeOptions>({
             mergeAttributes(this.options.HTMLAttributes, {
                 class: 'speaker-label',
                 'data-speaker-id': speakerId,
+                label: label,
+                color: color,
                 style: `
                     display: block;
                     font-weight: 700;

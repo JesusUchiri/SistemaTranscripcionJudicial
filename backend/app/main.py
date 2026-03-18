@@ -254,12 +254,16 @@ def _cors_headers(origin: Optional[str]) -> dict:
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Asegura que las respuestas 500 incluyan cabeceras CORS para que el front no vea error CORS."""
+    import traceback
+    tb = traceback.format_exc()
     logger.exception("Error no controlado: %s", exc)
     origin = request.headers.get("origin")
     headers = _cors_headers(origin)
+    from app.config import settings as _s
+    detail = f"{type(exc).__name__}: {exc}" if _s.ENVIRONMENT != "production" else "Error interno del servidor"
     return JSONResponse(
         status_code=500,
-        content={"detail": "Error interno del servidor"},
+        content={"detail": detail},
         headers=headers,
     )
 

@@ -77,16 +77,19 @@ async def crear_hablante(
     db: AsyncSession = Depends(get_db),
     _usuario: Usuario = Depends(get_current_user),
 ):
-    """Crea un nuevo hablante (o lo detecta automáticamente vía WebSocket)."""
+    """Crea un nuevo hablante (o lo detecta automáticamente vía WebSocket).
+    Si el speaker_id ya existe, retorna el existente sin error (upsert).
+    """
     # Verificar si ya existe este speaker_id para esta audiencia
-    existente = await db.execute(
+    existente_result = await db.execute(
         select(Hablante).where(
             Hablante.audiencia_id == audiencia_id,
             Hablante.speaker_id == datos.speaker_id,
         )
     )
-    if existente.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="El speaker_id ya existe para esta audiencia")
+    existente = existente_result.scalar_one_or_none()
+    if existente:
+        return existente
 
     # Aplicar colores y etiquetas por defecto según el rol
     config_rol = ROLES_CONFIG.get(datos.rol, ROLES_CONFIG["otro"])
@@ -125,37 +128,53 @@ async def actualizar_hablante(
     _usuario: Usuario = Depends(get_current_user),
 ):
     """Actualiza un hablante — usado para asignar rol judicial al speaker_id."""
-    resultado = await db.execute(
-        select(Hablante).where(
-            Hablante.id == hablante_id,
-            Hablante.audiencia_id == audiencia_id,
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        resultado = await db.execute(
+            select(Hablante).where(
+                Hablante.id == hablante_id,
+                Hablante.audiencia_id == audiencia_id,
+            )
         )
-    )
-    hablante = resultado.scalar_one_or_none()
-    if not hablante:
-        raise HTTPException(status_code=404, detail="Hablante no encontrado")
+        hablante = resultado.scalar_one_or_none()
+        if not hablante:
+            raise HTTPException(status_code=404, detail="Hablante no encontrado")
 
-    # Actualizar campos proporcionados
-    if datos.rol is not None:
-        hablante.rol = datos.rol
-        # Si cambia el rol, actualizar etiqueta y color con defaults
-        config_rol = ROLES_CONFIG.get(datos.rol, ROLES_CONFIG["otro"])
-        if datos.etiqueta is None:
-            hablante.etiqueta = config_rol["etiqueta"]
-        if datos.color is None:
-            hablante.color = config_rol["color"]
-    if datos.etiqueta is not None:
-        hablante.etiqueta = datos.etiqueta
-    if datos.nombre is not None:
-        hablante.nombre = datos.nombre
-    if datos.color is not None:
-        hablante.color = datos.color
-    if datos.orden is not None:
-        hablante.orden = datos.orden
+        logger.warning(f"[HABLANTE PUT] antes: rol={hablante.rol}, datos.rol={datos.rol}, datos.nombre={datos.nombre}")
 
-    await db.commit()
-    await db.refresh(hablante)
-    return hablante
+        # Actualizar campos proporcionados
+        if datos.rol is not None:
+            hablante.rol = datos.rol
+            # Si cambia el rol, actualizar etiqueta y color con defaults
+            config_rol = ROLES_CONFIG.get(datos.rol, ROLES_CONFIG["otro"])
+            if datos.etiqueta is None:
+                hablante.etiqueta = config_rol["etiqueta"]
+            if datos.color is None:
+                hablante.color = config_rol["color"]
+        if datos.etiqueta is not None:
+            hablante.etiqueta = datos.etiqueta
+        if datos.nombre is not None:
+            hablante.nombre = datos.nombre
+        if datos.color is not None:
+            hablante.color = datos.color
+        if datos.orden is not None:
+            hablante.orden = datos.orden
+
+        await db.commit()
+        await db.refresh(hablante)
+
+        logger.warning(f"[HABLANTE PUT] después: rol={hablante.rol}, etiqueta={hablante.etiqueta}")
+        return hablante
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"[HABLANTE PUT] ERROR: {type(e).__name__}: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno: {type(e).__name__}: {str(e)}")
 
 
 @router.delete("/{hablante_id}", status_code=204)

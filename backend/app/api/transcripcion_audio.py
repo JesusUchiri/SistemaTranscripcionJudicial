@@ -1,6 +1,7 @@
 """
 Endpoint para subir archivos de audio y transcribirlos con Deepgram batch API.
 """
+import logging
 import os
 import uuid
 from datetime import date, time
@@ -17,6 +18,9 @@ from app.models.audiencia import Audiencia
 from app.models.segmento import Segmento
 from app.models.usuario import Usuario
 from app.services.deepgram_batch import DeepgramBatchService
+from app.utils.audio_compress import compress_for_transcription
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/transcripcion-audio", tags=["transcripcion-audio"])
 
@@ -139,10 +143,14 @@ async def transcribir_audio(
     await db.flush()
     await db.refresh(audiencia)
 
+    # Compress audio before sending to Deepgram (FFmpeg: 16kHz mono 64kbps MP3)
+    transcribe_path, was_compressed = await compress_for_transcription(audio_path)
+    transcribe_mime = "audio/mpeg" if was_compressed else mime_type
+
     # Transcribe with Deepgram (read from disk — no double RAM usage)
     try:
         service = DeepgramBatchService()
-        result = await service.transcribe_file(audio_path, mime_type)
+        result = await service.transcribe_file(transcribe_path, transcribe_mime)
     except Exception as e:
         # Update audiencia state to reflect error
         audiencia.estado = "pendiente"
@@ -151,6 +159,9 @@ async def transcribir_audio(
             status_code=500,
             detail=f"Error en la transcripción con Deepgram: {str(e)}"
         )
+    finally:
+        if was_compressed and os.path.exists(transcribe_path):
+            os.unlink(transcribe_path)
 
     # Save segments to DB
     segments_data = result.get("segments", [])
@@ -169,21 +180,48 @@ async def transcribir_audio(
         )
         db.add(segmento)
 
+    # ── Auto-crear hablantes con colores distintos para cada speaker detectado ──
+    from app.models.hablante import Hablante
+    from app.api.hablantes import COLORES_POR_ORDEN
+
+    unique_speakers = list(dict.fromkeys(
+        seg_data["speaker_id"] for seg_data in segments_data
+    ))
+    for idx, speaker_id in enumerate(unique_speakers):
+        # Verificar si ya existe
+        existing = await db.execute(
+            select(Hablante).where(
+                Hablante.audiencia_id == audiencia.id,
+                Hablante.speaker_id == speaker_id,
+            )
+        )
+        if existing.scalar_one_or_none() is None:
+            color = COLORES_POR_ORDEN[idx % len(COLORES_POR_ORDEN)]
+            hablante = Hablante(
+                audiencia_id=audiencia.id,
+                speaker_id=speaker_id,
+                rol="otro",
+                etiqueta=f"{speaker_id.upper()}:",
+                color=color,
+                orden=idx,
+                auto_detectado=True,
+            )
+            db.add(hablante)
+
     # Update audiencia with transcription info
     audiencia.estado = "transcrita"
     audiencia.audio_duration_seconds = result.get("duration", 0.0)
 
     await db.flush()
-    await db.refresh(audiencia)
 
     return {
         "audiencia_id": str(audiencia.id),
         "expediente": audiencia.expediente,
-        "estado": audiencia.estado,
+        "estado": "transcrita",
         "total_segmentos": len(segments_data),
         "duracion_segundos": result.get("duration", 0.0),
-        "hablantes_detectados": result.get("speakers_count", 0),
-        "mensaje": f"Audio transcrito exitosamente. {len(segments_data)} segmentos generados.",
+        "hablantes_detectados": len(unique_speakers),
+        "mensaje": f"Audio transcrito exitosamente. {len(segments_data)} segmentos generados con {len(unique_speakers)} hablantes.",
     }
 
 
@@ -213,10 +251,6 @@ async def retranscribir_audio_existente(
     if not audiencia.audio_path or not os.path.exists(audiencia.audio_path):
         raise HTTPException(status_code=404, detail="No hay archivo de audio disponible")
 
-    # Read audio
-    with open(audiencia.audio_path, "rb") as f:
-        audio_bytes = f.read()
-
     # Determine mime type from extension
     ext = os.path.splitext(audiencia.audio_path)[1].lower()
     ext_map = {
@@ -237,15 +271,22 @@ async def retranscribir_audio_existente(
     for seg in existing.scalars().all():
         await db.delete(seg)
 
+    # Compress audio before sending to Deepgram
+    transcribe_path, was_compressed = await compress_for_transcription(audiencia.audio_path)
+    transcribe_mime = "audio/mpeg" if was_compressed else mime_type
+
     # Re-transcribe
     try:
         service = DeepgramBatchService()
-        result = await service.transcribe_file(audio_bytes, mime_type)
+        result = await service.transcribe_file(transcribe_path, transcribe_mime)
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Error en la transcripción: {str(e)}"
         )
+    finally:
+        if was_compressed and os.path.exists(transcribe_path):
+            os.unlink(transcribe_path)
 
     # Save new segments
     segments_data = result.get("segments", [])
@@ -268,7 +309,6 @@ async def retranscribir_audio_existente(
     audiencia.audio_duration_seconds = result.get("duration", 0.0)
 
     await db.flush()
-    await db.refresh(audiencia)
 
     return {
         "audiencia_id": str(audiencia.id),

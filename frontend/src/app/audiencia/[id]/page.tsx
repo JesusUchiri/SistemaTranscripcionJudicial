@@ -15,6 +15,7 @@
  */
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import { AuthGuard } from '@/components/auth/AuthGuard'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useAudioCapture } from '@/hooks/useAudioCapture'
 import { useDeepgramSocket } from '@/hooks/useDeepgramSocket'
@@ -47,6 +48,14 @@ interface HablanteInfo {
 export default function PaginaTranscripcion() {
     const params = useParams()
     const router = useRouter()
+    const { user } = useAuthStore()
+
+    useEffect(() => {
+        if (user?.rol === 'admin') {
+            router.replace('/admin')
+        }
+    }, [user, router])
+
     const audienciaId = params.id as string
 
     const [audiencia, setAudiencia] = useState<Audiencia | null>(null)
@@ -93,7 +102,7 @@ export default function PaginaTranscripcion() {
                     setMostrarSelector(false)
                 }
             } catch {
-                router.push('/')
+                window.location.href = '/'
             }
         }
         cargar()
@@ -205,9 +214,14 @@ export default function PaginaTranscripcion() {
 
     // PanelHablantes update → refresh labels in Canvas via re-render
     const handleHablanteActualizado = useCallback((hablante: HablanteInfo) => {
-        setHablantesData(prev =>
-            prev.map(h => (h.id === hablante.id ? hablante : h))
-        )
+        setHablantesData(prev => {
+            const exists = prev.some(h => h.id === hablante.id)
+            if (exists) {
+                return prev.map(h => (h.id === hablante.id ? hablante : h))
+            }
+            // Hablante nuevo — agregarlo a la lista
+            return [...prev, hablante]
+        })
     }, [])
 
     // Insert frase from sidebar
@@ -241,6 +255,7 @@ export default function PaginaTranscripcion() {
     /* ── Render ──────────────────────────────────────── */
 
     return (
+      <AuthGuard>
         <div className="h-screen flex flex-col" style={{ background: 'var(--bg-primary)' }}>
             {/* ── Header ─────────────────────────────────── */}
             <header
@@ -249,7 +264,7 @@ export default function PaginaTranscripcion() {
             >
                 <div className="flex items-center gap-3 sm:gap-4 overflow-hidden">
                     <button
-                        onClick={() => router.push('/')}
+                        onClick={() => window.location.href = '/'}
                         className="text-[10px] sm:text-xs px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg transition-colors hover:brightness-110 shrink-0"
                         style={{ color: 'var(--text-muted)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
                     >
@@ -304,7 +319,7 @@ export default function PaginaTranscripcion() {
                     
                     {/* Sprint 9: Ver Acta oficial */}
                     <button
-                        onClick={() => router.push(`/audiencia/${audienciaId}/acta`)}
+                        onClick={() => window.location.href = `/audiencia/${audienciaId}/acta`}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all hover:brightness-110"
                         style={{
                             background: 'var(--accent-gold)',
@@ -390,7 +405,7 @@ export default function PaginaTranscripcion() {
                     )}
 
                     {/* Canvas TipTap */}
-                    <div className="flex-1 overflow-hidden relative">
+                    <div className="flex-1 overflow-hidden relative flex flex-col">
                         <RevisionBatchPanel 
                             segmentos={segments} 
                             onAceptar={handleAceptarBatch} 
@@ -514,5 +529,6 @@ export default function PaginaTranscripcion() {
                 </aside>
             </div>
         </div>
+      </AuthGuard>
     )
 }

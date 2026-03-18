@@ -31,6 +31,11 @@ export default function BarraEstado() {
         return `${h}:${m}:${s}`
     }
 
+    // Calcula la duración en segundos para el costo. Si hay un audio ya subido o se streaméo, usa el max timestamp o el tiempo real.
+    const duracionEvaluar = elapsedSeconds > 0 
+        ? elapsedSeconds 
+        : segments.length > 0 ? segments[segments.length - 1].timestamp_fin : 0;
+
     const colorConexion = {
         connected: '#059669',
         reconnecting: '#D97706',
@@ -112,6 +117,18 @@ export default function BarraEstado() {
 
             {/* Espaciador */}
             <div className="flex-1" />
+
+            {/* Costo IA */}
+            {duracionEvaluar > 0 && (
+                <div className="flex items-center gap-2 shrink-0 bg-[#A68246]/10 px-2 py-1 rounded" style={{ color: '#C49640' }}>
+                    <span className="opacity-80">Costo IA:</span>
+                    <span className="font-mono font-bold">${((duracionEvaluar / 60) * 0.0043).toFixed(4)} USD</span>
+                    <span className="hidden sm:inline opacity-70">({(duracionEvaluar / 60).toFixed(1)} min)</span>
+                </div>
+            )}
+
+            {/* Separador */}
+            {duracionEvaluar > 0 && <span className="opacity-30">│</span>}
 
             {/* Estado de conexión */}
             <div className="flex items-center gap-1.5 shrink-0">

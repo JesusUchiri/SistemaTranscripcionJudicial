@@ -24,12 +24,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     error: null,
 
     login: async (credentials) => {
-        set({ isLoading: true, error: null })
+        // LIMPIEZA TOTAL ANTES DE INTENTAR LOGIN
+        localStorage.removeItem('access_token')
+        set({ user: null, token: null, isLoading: true, error: null })
+        
         try {
             const { data } = await api.post<TokenResponse>('/api/auth/login', credentials)
             localStorage.setItem('access_token', data.access_token)
-            set({ token: data.access_token, isLoading: false })
-            await get().fetchUser()
+            
+            // Forzar el token en el estado inmediatamente
+            set({ token: data.access_token })
+            
+            // CARGAR EL USUARIO ANTES DE TERMINAR EL LOGIN
+            const userRes = await api.get<User>('/api/auth/me')
+            set({ user: userRes.data, isLoading: false })
+            
             return true
         } catch (err: any) {
             const isNetworkError = !err.response && (err.code === 'ERR_NETWORK' || err.message?.includes('Network'))

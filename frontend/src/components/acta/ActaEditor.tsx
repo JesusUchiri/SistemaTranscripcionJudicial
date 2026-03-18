@@ -24,6 +24,7 @@ export default function ActaEditor({ initialContent, onChange, editable = true }
             Heading.configure({ levels: [1, 2, 3] }),
         ],
         content: initialContent,
+        immediatelyRender: false,
         editable,
         onUpdate: ({ editor }) => {
             onChange(editor.getHTML())

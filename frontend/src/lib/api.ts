@@ -2,6 +2,7 @@
  * Axios instance configured for JudiScribe API.
  * En cliente usa apiBaseUrl() para soportar acceso desde otras PCs (Dokploy).
  * En 401 intenta renovar el access token con el refresh (cookie httpOnly) y reintenta la petición.
+ * Las peticiones concurrentes que fallan con 401 se encolan y se reintentan cuando el refresh termina.
  */
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { apiBaseUrl } from '@/lib/urls'
@@ -15,6 +16,19 @@ const api = axios.create({
 })
 
 let isRefreshing = false
+// Cola de peticiones que esperan el nuevo token
+let waitingQueue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = []
+
+function processQueue(error: unknown, token: string | null) {
+    waitingQueue.forEach(({ resolve, reject }) => {
+        if (error) {
+            reject(error)
+        } else {
+            resolve(token!)
+        }
+    })
+    waitingQueue = []
+}
 
 // Request interceptor — baseURL en cliente (por si se hidrata después) y JWT
 api.interceptors.request.use((config) => {
@@ -44,24 +58,33 @@ api.interceptors.response.use(
             return Promise.reject(error)
         }
 
-        if (!isRefreshing) {
-            isRefreshing = true
-            try {
-                const { data } = await api.post<{ access_token: string }>('/api/auth/refresh', {})
-                localStorage.setItem('access_token', data.access_token)
+        if (isRefreshing) {
+            // Encolar la petición hasta que el refresh termine
+            return new Promise((resolve, reject) => {
+                waitingQueue.push({ resolve, reject })
+            }).then((token) => {
                 originalRequest._retry = true
-                originalRequest.headers.Authorization = `Bearer ${data.access_token}`
+                originalRequest.headers.Authorization = `Bearer ${token}`
                 return api(originalRequest)
-            } catch {
-                localStorage.removeItem('access_token')
-                window.location.href = '/login'
-                return Promise.reject(error)
-            } finally {
-                isRefreshing = false
-            }
+            }).catch((err) => Promise.reject(err))
         }
 
-        return Promise.reject(error)
+        isRefreshing = true
+        try {
+            const { data } = await api.post<{ access_token: string }>('/api/auth/refresh', {})
+            localStorage.setItem('access_token', data.access_token)
+            processQueue(null, data.access_token)
+            originalRequest._retry = true
+            originalRequest.headers.Authorization = `Bearer ${data.access_token}`
+            return api(originalRequest)
+        } catch (refreshError) {
+            processQueue(refreshError, null)
+            localStorage.removeItem('access_token')
+            window.location.href = '/login'
+            return Promise.reject(refreshError)
+        } finally {
+            isRefreshing = false
+        }
     }
 )
 

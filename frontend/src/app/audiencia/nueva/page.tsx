@@ -4,6 +4,9 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '@/lib/api'
 import type { AudienciaCreate } from '@/types'
+import { AuthGuard } from '@/components/auth/AuthGuard'
+import { useAuthStore } from '@/stores/authStore'
+import { useEffect } from 'react'
 
 const TIPOS_AUDIENCIA = [
     'Juicio oral',
@@ -22,7 +25,14 @@ const INSTANCIAS = [
 
 export default function NuevaAudienciaPage() {
     const router = useRouter()
+    const { user } = useAuthStore()
     const [loading, setLoading] = useState(false)
+
+    useEffect(() => {
+        if (user?.rol === 'admin') {
+            router.replace('/admin')
+        }
+    }, [user, router])
     const [form, setForm] = useState<AudienciaCreate>({
         expediente: '',
         juzgado: '',
@@ -47,7 +57,7 @@ export default function NuevaAudienciaPage() {
         setLoading(true)
         try {
             const { data } = await api.post('/api/audiencias', form)
-            router.push(`/audiencia/${data.id}`)
+            window.location.href = `/audiencia/${data.id}`
         } catch (err) {
             console.error('Error creating audiencia:', err)
         } finally {
@@ -63,11 +73,12 @@ export default function NuevaAudienciaPage() {
     }
 
     return (
-        <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
+        <AuthGuard>
+            <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
             {/* Header */}
             <header className="px-4 sm:px-8 py-4 sm:py-5 flex items-center gap-4"
                 style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                <button onClick={() => router.push('/')}
+                <button onClick={() => window.location.href = '/'}
                     className="btn-secondary text-xs sm:text-sm">
                     Volver
                 </button>
@@ -201,5 +212,6 @@ export default function NuevaAudienciaPage() {
                 </form>
             </main>
         </div>
+        </AuthGuard>
     )
 }

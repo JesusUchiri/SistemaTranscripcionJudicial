@@ -16,53 +16,55 @@ interface AuthGuardProps {
 export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
     const router = useRouter()
     const pathname = usePathname()
-    const { user, token, isLoading } = useAuthStore()
-    const [isChecking, setIsChecking] = useState(true)
+    const { user, token, isLoading, fetchUser } = useAuthStore()
+    const [isReady, setIsReady] = useState(false)
 
     useEffect(() => {
-        const checkAuth = async () => {
-            // Si no hay token, redirigir a login
+        const verify = async () => {
+            // 1. Si no hay token, fuera.
             if (!token) {
                 router.push(`/login?redirect=${encodeURIComponent(pathname)}`)
                 return
             }
 
-            // Si no hay usuario pero hay token, esperar a que se cargue
-            if (!user && token) {
-                // El authStore ya está intentando cargar el usuario
-                await new Promise((resolve) => setTimeout(resolve, 100))
-                setIsChecking(false)
-                return
+            // 2. Si hay token pero no hay usuario, intentar cargarlo una vez más
+            if (token && !user && !isLoading) {
+                try {
+                    await fetchUser()
+                } catch (err) {
+                    console.error('Error verificando sesión:', err)
+                    router.push(`/login?redirect=${encodeURIComponent(pathname)}`)
+                    return
+                }
             }
 
-            // Si hay usuario, verificar el rol
-            if (user && requiredRole && user.rol !== requiredRole && user.rol !== 'admin') {
-                router.push('/')
-                return
-            }
-
-            setIsChecking(false)
+            setIsReady(true)
         }
+        verify()
+    }, [token, user, isLoading, pathname, router, fetchUser])
 
-        checkAuth()
-    }, [token, user, router, pathname, requiredRole])
-
-    // Mostrar loading mientras se verifica
-    if (isChecking || isLoading || (token && !user)) {
+    // 3. Mientras carga o verifica, mostrar splash screen
+    if (isLoading || !isReady) {
         return (
             <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
                 <div className="text-center">
                     <div className="logo-monogram mx-auto mb-4 animate-pulse" style={{ width: '48px', height: '48px', fontSize: '20px' }}>
                         J
                     </div>
-                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Verificando acceso...</p>
+                    <p className="text-xs uppercase tracking-widest opacity-50" style={{ color: 'var(--text-primary)' }}>
+                        Verificando credenciales
+                    </p>
                 </div>
             </div>
         )
     }
 
-    // Si no hay usuario después de verificar, no mostrar nada (ya redirigió)
-    if (!user) {
+    // 4. Si después de cargar no hay usuario (token inválido o logout), el efecto ya habrá redirigido
+    if (!user) return <>{children}</>
+
+    // 5. Verificar permisos de rol (Admin tiene pase total)
+    if (requiredRole && user.rol !== requiredRole && user.rol !== 'admin') {
+        router.replace('/')
         return null
     }
 

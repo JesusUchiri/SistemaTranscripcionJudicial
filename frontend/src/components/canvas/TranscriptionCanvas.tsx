@@ -193,7 +193,13 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
     // Get speaker label and color from the lookup map (or fallback to defaults)
     const getSpeakerInfo = useCallback((speakerId: string) => {
         const info = speakerMap.get(speakerId)
-        if (info) return { etiqueta: info.etiqueta, color: info.color }
+        if (info) {
+            // Combinar etiqueta + nombre si está disponible: "JUEZ: Edmil Jampier"
+            const label = info.nombre
+                ? `${info.etiqueta} ${info.nombre}`
+                : info.etiqueta
+            return { etiqueta: label, color: info.color }
+        }
         // Fallback: cycle through a palette
         const colors = ['#1B3A5C', '#2D6A4F', '#9B2226', '#BC6C25', '#6B21A8', '#0E7490', '#64748B', '#DB2777']
         const idx = parseInt(speakerId.replace(/\D/g, ''), 10) || 0
@@ -218,6 +224,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         ],
         editable: !soloLectura,
         content: '',
+        immediatelyRender: false,
         editorProps: {
             attributes: {
                 class: 'focus:outline-none min-h-[600px] w-full',
@@ -328,6 +335,36 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         if (editor) editor.setEditable(!soloLectura)
     }, [editor, soloLectura])
 
+    /* ── Sync SpeakerNode labels when hablantes change ─ */
+
+    useEffect(() => {
+        if (!editor || hablantes.length === 0) return
+
+        const { doc, tr } = editor.state
+        let modified = false
+
+        doc.descendants((node, pos) => {
+            if (node.type.name === 'speakerNode') {
+                const speakerId = node.attrs.speakerId
+                const { etiqueta, color } = getSpeakerInfo(speakerId)
+
+                // Only update if label or color actually changed
+                if (node.attrs.label !== etiqueta || node.attrs.color !== color) {
+                    tr.setNodeMarkup(pos, undefined, {
+                        ...node.attrs,
+                        label: etiqueta,
+                        color,
+                    })
+                    modified = true
+                }
+            }
+        })
+
+        if (modified) {
+            editor.view.dispatch(tr)
+        }
+    }, [editor, speakerMap, hablantes, getSpeakerInfo])
+
     /* ── Imperative handle ──────────────────────────── */
 
     useImperativeHandle(ref, () => ({
@@ -428,11 +465,21 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         const html = htmlParts.join('')
         editor.chain().focus('end').insertContent(html).run()
 
-        // Auto-scroll to bottom (scroll the page area, not ProseMirror)
-        if (autoScrollRef.current && containerRef.current) {
+        // Auto-scroll: During streaming (few new segments), scroll to bottom.
+        // During initial bulk load (many segments at once), scroll to top.
+        const isBulkLoad = prevCount === 0 && nuevos.length > 5
+        if (containerRef.current) {
             requestAnimationFrame(() => {
                 const pageArea = containerRef.current
-                if (pageArea) pageArea.scrollTop = pageArea.scrollHeight
+                if (pageArea) {
+                    if (isBulkLoad) {
+                        // Initial load from DB — show the beginning of the document
+                        pageArea.scrollTop = 0
+                    } else if (autoScrollRef.current) {
+                        // Live streaming — follow new content
+                        pageArea.scrollTop = pageArea.scrollHeight
+                    }
+                }
             })
         }
     }, [editor, segments, editedSegmentIds, getSpeakerInfo])

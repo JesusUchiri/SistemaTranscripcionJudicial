@@ -307,7 +307,7 @@ REGLAS:
 CONTINUACIÓN:"""
 
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=settings.ANTHROPIC_MODEL,
             max_tokens=max_tokens,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}],
