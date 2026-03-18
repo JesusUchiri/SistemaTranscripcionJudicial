@@ -148,7 +148,7 @@ export default function TranscribirPage() {
             formData.append('instancia', instancia)
 
             const { data } = await api.post('/api/transcripcion-audio', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
+                headers: { 'Content-Type': undefined },
                 timeout: 1200000,
                 onUploadProgress: (progressEvent) => {
                     if (!progressEvent.total) return
