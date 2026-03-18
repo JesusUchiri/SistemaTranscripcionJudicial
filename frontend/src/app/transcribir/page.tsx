@@ -137,7 +137,24 @@ export default function TranscribirPage() {
         setPhase('uploading')
         setError(null)
         setProgress(0)
-        let activeInterval: any = null
+        let activeInterval: ReturnType<typeof setInterval> | null = null
+        let transcribingStarted = false
+
+        const startTranscribingPhase = () => {
+            if (transcribingStarted) return
+            transcribingStarted = true
+            setPhase('transcribing')
+            setProgress(30)
+            let p = 30
+            activeInterval = setInterval(() => {
+                p = Math.min(p + 1, 94)
+                setProgress(p)
+            }, 3000)
+        }
+
+        // Si onUploadProgress no dispara (upload instantáneo o total desconocido),
+        // transicionar a 'transcribing' después de 3 segundos de todas formas.
+        const uploadFallbackTimer = setTimeout(startTranscribingPhase, 3000)
 
         try {
             const formData = new FormData()
@@ -151,32 +168,29 @@ export default function TranscribirPage() {
                 headers: { 'Content-Type': undefined },
                 timeout: 1200000,
                 onUploadProgress: (progressEvent) => {
+                    clearTimeout(uploadFallbackTimer)
                     const total = progressEvent.total || 0
-                    const pct = total > 0
-                        ? Math.round((progressEvent.loaded / total) * 30)
-                        : Math.min(progressEvent.loaded > 0 ? 15 : 0, 29) // pulso si total desconocido
-                    setProgress(pct)
-                    if (total > 0 && progressEvent.loaded >= total) {
-                        setPhase('transcribing')
-                        setProgress(30)
-                        if (activeInterval) clearInterval(activeInterval)
-                        let p = 30
-                        activeInterval = setInterval(() => {
-                            p = Math.min(p + 1, 94)
-                            setProgress(p)
-                        }, 3000)
+                    if (total > 0) {
+                        const pct = Math.round((progressEvent.loaded / total) * 30)
+                        setProgress(pct)
+                        if (progressEvent.loaded >= total) startTranscribingPhase()
+                    } else {
+                        // total desconocido pero bytes fluyendo → transicionar ya
+                        if (progressEvent.loaded > 0) startTranscribingPhase()
                     }
                 },
             })
 
+            clearTimeout(uploadFallbackTimer)
             if (activeInterval) clearInterval(activeInterval)
             setProgress(100)
             setResult(data)
             setPhase('done')
         } catch (err: any) {
+            clearTimeout(uploadFallbackTimer)
             if (activeInterval) clearInterval(activeInterval)
             setPhase('error')
-            setError(err.response?.data?.detail || 'Error al procesar el audio.')
+            setError(err.response?.data?.detail || err.message || 'Error al procesar el audio.')
         }
     }
 
