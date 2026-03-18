@@ -624,7 +624,7 @@ export default function PaginaTranscripcion() {
                                 detecciones={varDetecciones}
                                 onAceptarDeteccion={handleAceptarDeteccion}
                                 onRechazarDeteccion={removeVarDeteccion}
-                                onAudienciaActualizada={setAudiencia}
+                                onAudienciaActualizada={(campos) => setAudiencia(prev => prev ? { ...prev, ...campos } : prev)}
                             />
                         )}
                     </div>
