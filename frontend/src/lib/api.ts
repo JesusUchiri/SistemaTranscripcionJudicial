@@ -57,6 +57,11 @@ api.interceptors.response.use(
             window.location.href = '/login'
             return Promise.reject(error)
         }
+        // Si no hay token en localStorage (logout en progreso), no intentar refresh
+        if (!localStorage.getItem('access_token')) {
+            window.location.href = '/login'
+            return Promise.reject(error)
+        }
 
         if (isRefreshing) {
             // Encolar la petición hasta que el refresh termine

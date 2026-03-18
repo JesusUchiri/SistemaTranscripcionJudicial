@@ -137,6 +137,20 @@ async def refresh_token(
     return TokenResponse(access_token=access_token)
 
 
+@router.post("/logout")
+async def logout(response: Response):
+    """Invalida la cookie de refresh token en el cliente."""
+    is_production = settings.ENVIRONMENT == "production"
+    response.delete_cookie(
+        key="refresh_token",
+        httponly=True,
+        secure=is_production,
+        samesite="none" if is_production else "lax",
+        path="/",
+    )
+    return {"ok": True}
+
+
 @router.get("/me", response_model=UsuarioResponse)
 async def get_me(
     current_user: Annotated[Usuario, Depends(get_current_user)],

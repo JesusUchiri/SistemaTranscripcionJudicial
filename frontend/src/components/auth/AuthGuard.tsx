@@ -59,8 +59,8 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
         )
     }
 
-    // 4. Si después de cargar no hay usuario (token inválido o logout), el efecto ya habrá redirigido
-    if (!user) return <>{children}</>
+    // 4. Si después de cargar no hay usuario, el efecto ya redirigió — no renderizar nada mientras ocurre
+    if (!user) return null
 
     // 5. Verificar permisos de rol (Admin tiene pase total)
     if (requiredRole && user.rol !== requiredRole && user.rol !== 'admin') {

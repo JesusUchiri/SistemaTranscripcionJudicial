@@ -224,7 +224,7 @@ export default function TranscribirPage() {
                     </div>
                     <div className="flex items-center gap-3">
                         <button onClick={() => window.location.href = '/'} className="btn-secondary text-xs">Dashboard</button>
-                        <button onClick={() => { logout(); window.location.href = '/login' }} className="btn-secondary text-xs">Salir</button>
+                        <button onClick={async () => { await logout(); window.location.href = '/login' }} className="btn-secondary text-xs">Salir</button>
                     </div>
                 </header>
 

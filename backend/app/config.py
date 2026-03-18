@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000"
 
     model_config = {
-        "env_file": ".env",
+        "env_file": [".env", ".env.local"],  # .env.local tiene prioridad (overrides locales)
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
         "extra": "ignore",

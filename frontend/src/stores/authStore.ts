@@ -12,7 +12,7 @@ interface AuthState {
     error: string | null
 
     login: (credentials: LoginRequest) => Promise<boolean>
-    logout: () => void
+    logout: () => Promise<void>
     fetchUser: () => Promise<void>
     initialize: () => Promise<void>
 }
@@ -54,9 +54,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
     },
 
-    logout: () => {
+    logout: async () => {
+        // Limpiar estado local primero para que el interceptor no reintente
         localStorage.removeItem('access_token')
         set({ user: null, token: null })
+        // Luego invalidar la cookie httpOnly en el backend
+        try {
+            await api.post('/api/auth/logout')
+        } catch {
+            // Ignorar errores de red — la cookie expirará por su cuenta
+        }
     },
 
     fetchUser: async () => {

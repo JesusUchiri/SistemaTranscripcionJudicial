@@ -241,18 +241,7 @@ body {
   width: fit-content;
 }
 
-/* Provisional text (not yet confirmed) */
-.text-provisional {
-  color: var(--text-muted);
-  background: rgba(166, 130, 70, 0.03);
-  border-left: 2px solid var(--accent-gold);
-  padding: 6px 16px;
-  margin: 12px 0;
-  font-style: italic;
-  animation: typing-fade 1.5s infinite alternate;
-  border-radius: 0 2px 2px 0;
-  width: fit-content;
-}
+/* (definición canónica de text-provisional abajo) */
 
 .canvas-editor .ProseMirror p {
   margin-bottom: 8px;
@@ -263,17 +252,13 @@ body {
   /* Asegurar que el párrafo use todo el ancho */
 }
 
-/* Provisional text (not yet confirmed by Deepgram) */
+/* Provisional text — inline, fluye dentro del mismo párrafo que el texto confirmado */
 .text-provisional {
   color: var(--text-muted);
-  background: rgba(37, 99, 235, 0.03);
-  border-left: 3px solid rgba(37, 99, 235, 0.1);
-  padding: 4px 12px;
-  margin: 8px 0;
   font-style: italic;
-  animation: typing-fade 2s infinite alternate;
-  border-radius: 0 4px 4px 0;
-  width: fit-content;
+  /* Sin background, border, margin ni padding:
+     el texto provisional vive en el mismo flujo tipográfico que el confirmado.
+     Al confirmarse (frase final), el swap es en la misma posición → sin salto visual. */
 }
 
 @keyframes typing-fade {
@@ -290,18 +275,23 @@ body {
 @keyframes fadeInWord {
   from {
     opacity: 0;
-    transform: translateY(2px);
+    transform: translateX(-2px);
   }
-
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0);
   }
 }
 
+/* Palabra nueva: aparece con animación */
 .provisional-word {
   display: inline;
-  animation: fadeInWord 0.25s ease-out both;
+  animation: fadeInWord 0.18s ease-out both;
+}
+
+/* Palabra ya vista: sin animación, aparece inmediatamente */
+.provisional-word--stable {
+  display: inline;
 }
 
 /* Confidence-based highlighting */
@@ -713,14 +703,17 @@ body {
   }
 }
 
+/* cursor de texto provisional — indicador sutil de que hay audio en proceso */
 .typing-cursor {
   display: inline-block;
-  width: 2px;
-  height: 1.2em;
-  background-color: var(--accent-primary);
-  margin-left: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent-gold);
+  margin-left: 3px;
   vertical-align: middle;
   animation: blink 1s step-end infinite;
+  opacity: 0.6;
 }
 
 @keyframes fadeIn {

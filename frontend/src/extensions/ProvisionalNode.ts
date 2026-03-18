@@ -8,61 +8,59 @@ declare module '@tiptap/core' {
     interface Commands<ReturnType> {
         provisionalNode: {
             setProvisional: (attributes: { text: string; speakerId: string; color: string }) => ReturnType
+            updateProvisional: (attributes: { text: string; speakerId: string; color: string }) => ReturnType
             removeProvisional: () => ReturnType
         }
     }
 }
 
+/**
+ * ProvisionalNode — muestra texto de Deepgram no confirmado (is_final=false).
+ *
+ * Es un nodo INLINE para que las palabras provisionales fluyan dentro del mismo
+ * párrafo que el último texto confirmado. Cuando se confirma (is_final=true),
+ * el nodo se reemplaza con el span de segmento definitivo en la misma posición
+ * → sin saltos de layout, sin pérdida del hilo visual.
+ */
 const ProvisionalNode = Node.create<ProvisionalNodeOptions>({
     name: 'provisionalNode',
 
-    group: 'block',
-
+    // INLINE: vive dentro de párrafos, no como bloque separado
+    group: 'inline',
+    inline: true,
     atom: true,
 
     addAttributes() {
         return {
-            text: {
-                default: '',
-            },
-            speakerId: {
-                default: 'SPEAKER_00',
-            },
-            color: {
-                default: '#718096',
-            },
+            text:      { default: '' },
+            speakerId: { default: 'SPEAKER_00' },
+            color:     { default: '#82868C' },
         }
     },
 
     parseHTML() {
-        return [
-            {
-                tag: 'div[data-provisional="true"]',
-            },
-        ]
+        return [{ tag: 'span[data-provisional="true"]' }]
     },
 
     renderHTML({ HTMLAttributes }) {
-        const { text } = HTMLAttributes
         return [
-            'div',
+            'span',
             mergeAttributes(this.options.HTMLAttributes, {
                 'data-provisional': 'true',
                 class: 'text-provisional',
             }),
-            ['span', {}, text],
-            ['span', { class: 'typing-cursor' }, ''],
+            HTMLAttributes.text || '',
         ]
     },
 
     /**
-     * NodeView to render innerHTML — needed because renderHTML escapes HTML tags.
-     * This allows <span class="provisional-word"> to render as actual DOM elements
-     * for the word-by-word animation effect.
+     * NodeView con innerHTML — permite que los <span class="provisional-word">
+     * se rendericen como nodos DOM reales para la animación palabra-a-palabra.
+     * El método update() actualiza innerHTML IN-PLACE sin destruir el DOM.
      */
     addNodeView() {
         return ({ node }) => {
-            const dom = document.createElement('div')
+            const dom = document.createElement('span')
             dom.setAttribute('data-provisional', 'true')
             dom.classList.add('text-provisional')
 
@@ -78,6 +76,7 @@ const ProvisionalNode = Node.create<ProvisionalNodeOptions>({
                 dom,
                 update(updatedNode) {
                     if (updatedNode.type.name !== 'provisionalNode') return false
+                    // Solo reemplaza innerHTML — sin destruir/recrear el DOM
                     contentSpan.innerHTML = updatedNode.attrs.text || ''
                     return true
                 },
@@ -89,33 +88,41 @@ const ProvisionalNode = Node.create<ProvisionalNodeOptions>({
         return {
             setProvisional:
                 (attributes) =>
-                    ({ commands }) => {
-                        return commands.insertContent({
-                            type: this.name,
-                            attrs: attributes,
+                    ({ commands }) =>
+                        commands.insertContent({ type: this.name, attrs: attributes }),
+
+            /**
+             * Actualiza los attrs IN-PLACE con setNodeMarkup.
+             * Dispara update() en el nodeView → solo innerHTML swap, sin recrear DOM.
+             * Retorna false si no existe nodo provisional (usar setProvisional).
+             */
+            updateProvisional:
+                (attributes) =>
+                    ({ tr, state, dispatch }) => {
+                        let foundPos = -1
+                        state.doc.descendants((node, pos) => {
+                            if (node.type.name === this.name) foundPos = pos
                         })
+                        if (foundPos === -1) return false
+                        tr.setNodeMarkup(foundPos, undefined, attributes)
+                        if (dispatch) dispatch(tr)
+                        return true
                     },
+
             removeProvisional:
                 () =>
                     ({ tr, state, dispatch }) => {
-                        const { doc } = state
                         let foundPos = -1
-
-                        doc.descendants((node, pos) => {
-                            if (node.type.name === this.name) {
-                                foundPos = pos
-                            }
+                        state.doc.descendants((node, pos) => {
+                            if (node.type.name === this.name) foundPos = pos
                         })
-
-                        if (foundPos !== -1 && dispatch) {
-                            tr.delete(foundPos, foundPos + 1)
-                            return true
-                        }
-                        return false
+                        if (foundPos === -1) return false
+                        tr.delete(foundPos, foundPos + 1)
+                        if (dispatch) dispatch(tr)
+                        return true
                     },
         }
     },
 })
 
 export default ProvisionalNode
-

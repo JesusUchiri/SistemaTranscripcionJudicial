@@ -168,6 +168,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
     })
 
     const prevSegmentCountRef = useRef(0)
+    const prevProvisionalWordCountRef = useRef(0)
     const autoScrollRef = useRef(true)
     const containerRef = useRef<HTMLDivElement>(null)
 
@@ -396,17 +397,16 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         const prevCount = prevSegmentCountRef.current
         prevSegmentCountRef.current = segments.length
 
-        // Remover texto provisional usando comando de TipTap
-        editor.commands.removeProvisional()
+        // Resetear contador de palabras provisionales
+        prevProvisionalWordCountRef.current = 0
 
         // Determinar si el primer segmento nuevo es del mismo speaker que el último existente
         const lastExistingSeg = prevCount > 0 ? segments[prevCount - 1] : null
         const firstNewSeg = nuevos[0]
-        const continueSameSpeaker = lastExistingSeg?.speaker_id === firstNewSeg?.speaker_id
 
         const htmlParts: string[] = []
 
-        nuevos.forEach((seg, idx) => {
+        nuevos.forEach((seg) => {
             const globalIdx = segments.indexOf(seg)
             const prevSeg = globalIdx > 0 ? segments[globalIdx - 1] : null
             const newSpeaker = prevSeg?.speaker_id !== seg.speaker_id
@@ -418,30 +418,20 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
             const classes = ['segment-clickable']
             if (isEdited) classes.push('segment-edited')
 
-            // Si cambia el speaker, insertar etiqueta
             if (newSpeaker) {
                 htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}"></speaker-label>`)
             }
 
-            // Construir el texto del segmento palabra por palabra
             let segmentHtml = ''
             if (seg.palabras_json && seg.palabras_json.length > 0) {
                 seg.palabras_json.forEach((wordObj: any) => {
                     const wordText = wordObj.word
                     const conf = wordObj.confidence
                     const wordLower = wordText.toLowerCase().replace(/[.,;:!?]/g, '')
-
-                    // Sprint 6: Umbral subido a 0.85 para reducir falsos positivos
-                    // Solo marcar como baja confianza si:
-                    // 1. Confianza < 0.85
-                    // 2. NO es una palabra gramatical común
-                    // 3. Tiene más de 2 caracteres (evitar marcas en artículos cortos)
-                    // 4. NO es un término legal conocido (excluir del diccionario)
                     const shouldMark = conf < 0.85 &&
                         !GRAMMAR_WORDS.has(wordLower) &&
                         !KNOWN_LEGAL_TERMS.has(wordLower) &&
                         wordLower.length > 2
-
                     if (shouldMark) {
                         const confPercent = Math.round(conf * 100)
                         segmentHtml += `<span class="text-low-confidence" data-low-confidence="true" data-confidence="${conf}" data-segment-id="${seg.id}" title="Confianza: ${confPercent}%">${wordText}</span> `
@@ -453,15 +443,19 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 segmentHtml = texto + ' '
             }
 
-            // Agregar segmento como span inline (sin párrafo extra)
             const segmentClasses = ['segment-text', ...classes]
             htmlParts.push(`<span class="${segmentClasses.join(' ')}" data-segment-id="${seg.id}" data-timestamp="${timestamp}" data-edited="${isEdited}">${segmentHtml}</span>`)
         })
 
-        // focus('end') con scrollIntoView:false posiciona el cursor al final
-        // sin que TipTap haga su propio scroll (lo manejamos nosotros abajo)
+        // Una sola transacción: elimina el provisional + inserta el texto confirmado
+        // Esto evita el flash intermedio donde el provisional desaparece antes de que
+        // aparezca el texto definitivo.
         const html = htmlParts.join('')
-        editor.chain().focus('end', { scrollIntoView: false }).insertContent(html).run()
+        editor.chain()
+            .removeProvisional()
+            .focus('end', { scrollIntoView: false })
+            .insertContent(html)
+            .run()
 
         // Auto-scroll: During streaming, scroll to bottom after DOM update.
         // During initial bulk load (many segments at once), scroll to top.
@@ -500,41 +494,57 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         }
     }, [editor, activeSegmentId])
 
-    /* ── Provisional text (word-by-word animation) ── */
+    /* ── Provisional text — aparición palabra por palabra ── */
 
     useEffect(() => {
         if (!editor) return
 
-        // Remover provisional anterior siempre antes de actualizar
-        editor.commands.removeProvisional()
-
-        // Append new provisional using ProvisionalNode
-        if (provisionalText && provisionalText.trim()) {
-            const { color } = getSpeakerInfo(provisionalSpeaker || 'SPEAKER_00')
-
-            // Build word-by-word HTML if we have individual words
-            let displayText = provisionalText
-            if (provisionalWords && provisionalWords.length > 0) {
-                displayText = provisionalWords.map((w, i) => {
-                    const delay = Math.min(i * 30, 300) // Staggered delay per word, cap at 300ms
-                    return `<span class="provisional-word" style="animation-delay:${delay}ms">${w.word}</span>`
-                }).join(' ')
+        // Sin texto provisional → limpiar y resetear contador
+        if (!provisionalText || !provisionalText.trim()) {
+            // Si hay nuevos segmentos entrando al mismo tiempo, el efecto de segmentos
+            // ya maneja el removeProvisional en su chain. Aquí solo reseteamos el contador.
+            const hasPendingSegments = segments.length > prevSegmentCountRef.current
+            if (!hasPendingSegments) {
+                editor.commands.removeProvisional()
             }
-
-            editor.chain().focus('end', { scrollIntoView: false }).setProvisional({
-                text: displayText,
-                speakerId: provisionalSpeaker || 'SPEAKER_00',
-                color: color,
-            }).run()
-
-            if (autoScrollRef.current) {
-                requestAnimationFrame(() => requestAnimationFrame(() => {
-                    const el = containerRef.current
-                    if (el) el.scrollTop = el.scrollHeight
-                }))
-            }
+            prevProvisionalWordCountRef.current = 0
+            return
         }
-    }, [editor, provisionalText, provisionalSpeaker, provisionalWords, getSpeakerInfo])
+
+        const { color } = getSpeakerInfo(provisionalSpeaker || 'SPEAKER_00')
+        const prevCount = prevProvisionalWordCountRef.current
+
+        // Construir HTML: palabras ya vistas → sin animación, palabras nuevas → fadeInWord
+        let displayText = provisionalText
+        if (provisionalWords && provisionalWords.length > 0) {
+            displayText = provisionalWords.map((w, i) =>
+                i >= prevCount
+                    ? `<span class="provisional-word">${w.word}</span>`
+                    : `<span class="provisional-word--stable">${w.word}</span>`
+            ).join(' ')
+            prevProvisionalWordCountRef.current = provisionalWords.length
+        }
+
+        const attrs = {
+            text: displayText,
+            speakerId: provisionalSpeaker || 'SPEAKER_00',
+            color,
+        }
+
+        // Intentar actualizar in-place (no destruye el DOM, no reinicia animaciones)
+        // Si no existe nodo provisional, insertarlo al final
+        const updated = editor.commands.updateProvisional(attrs)
+        if (!updated) {
+            editor.chain().focus('end', { scrollIntoView: false }).setProvisional(attrs).run()
+        }
+
+        if (autoScrollRef.current) {
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                const el = containerRef.current
+                if (el) el.scrollTop = el.scrollHeight
+            }))
+        }
+    }, [editor, provisionalText, provisionalSpeaker, provisionalWords, segments, getSpeakerInfo])
 
     /* ── Smart auto-scroll control ──────────────────── */
 

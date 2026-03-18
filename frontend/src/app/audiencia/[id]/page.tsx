@@ -64,6 +64,7 @@ export default function PaginaTranscripcion() {
     const [cargaError, setCargaError] = useState<string | null>(null)
     const [fuenteAudio, setFuenteAudio] = useState<'microphone' | 'system'>('microphone')
     const [mostrarSelector, setMostrarSelector] = useState(true)
+    const [isInitializing, setIsInitializing] = useState(false)
     const [pestanaSidebar, setPestanaSidebar] = useState<'hablantes' | 'marcadores' | 'frases' | 'variables'>('hablantes')
     const [hablantesData, setHablantesData] = useState<HablanteInfo[]>([])
 
@@ -119,8 +120,10 @@ export default function PaginaTranscripcion() {
                 setAudiencia(resAudiencia.data)
                 useCanvasStore.getState().setSegments(resSegmentos.data)
                 
-                // Hide selector if we already have segments or the audio is transcribed/finished
-                if (resSegmentos.data.length > 0 || resAudiencia.data.estado === 'transcrita' || resAudiencia.data.estado === 'finalizada') {
+                // Ocultar selector solo en estados finales donde no tiene sentido grabar más.
+                // Si hay segmentos previos pero el estado sigue siendo activo,
+                // mantener el selector visible para poder reanudar la grabación tras un refresco.
+                if (resAudiencia.data.estado === 'transcrita' || resAudiencia.data.estado === 'finalizada') {
                     setMostrarSelector(false)
                 }
             } catch (err: any) {
@@ -204,10 +207,12 @@ export default function PaginaTranscripcion() {
 
     const iniciarTranscripcion = useCallback(async () => {
         setMostrarSelector(false)
+        setIsInitializing(true)
         connect()
         setTimeout(async () => {
             await startCapture(fuenteAudio)
             setTranscribing(true)
+            setIsInitializing(false)
         }, 500)
     }, [connect, startCapture, fuenteAudio, setTranscribing])
 
@@ -335,53 +340,42 @@ export default function PaginaTranscripcion() {
 
                 {/* Right controls */}
                 <div className="flex items-center gap-2">
-                    {/* Connection status pill */}
-                    <div
-                        className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs shrink-0"
-                        style={{
-                            background:
-                                connectionStatus === 'connected' ? 'rgba(34, 197, 94, 0.1)'
-                                    : connectionStatus === 'reconnecting' ? 'rgba(249, 115, 22, 0.1)'
-                                        : 'rgba(148, 163, 184, 0.1)',
-                            color:
-                                connectionStatus === 'connected' ? '#4ADE80'
-                                    : connectionStatus === 'reconnecting' ? '#FB923C'
-                                        : '#94A3B8',
-                        }}
-                    >
-                        <span
-                            className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full"
+                    {/* Connection status — solo visible cuando activo o con error */}
+                    {connectionStatus !== 'disconnected' && (
+                        <div
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] shrink-0"
                             style={{
-                                background:
-                                    connectionStatus === 'connected' ? '#4ADE80'
-                                        : connectionStatus === 'reconnecting' ? '#FB923C'
-                                            : '#94A3B8',
+                                background: connectionStatus === 'connected' ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)',
+                                color: connectionStatus === 'connected' ? '#4ADE80' : '#FB923C',
                             }}
-                        />
-                        <span className="hidden sm:inline">
-                            {connectionStatus === 'connected' ? 'Conectado'
-                                : connectionStatus === 'reconnecting' ? 'Reconectando...'
-                                    : 'Desconectado'}
-                        </span>
-                        <span className="sm:hidden uppercase font-bold">
-                            {connectionStatus === 'connected' ? 'OK'
-                                : connectionStatus === 'reconnecting' ? '...'
-                                    : 'OFF'}
-                        </span>
-                    </div>
+                        >
+                            <span
+                                className="w-1.5 h-1.5 rounded-full"
+                                style={{ background: connectionStatus === 'connected' ? '#4ADE80' : '#FB923C' }}
+                            />
+                            <span className="hidden sm:inline">
+                                {connectionStatus === 'connected' ? 'Conectado' : 'Reconectando...'}
+                            </span>
+                        </div>
+                    )}
                     
-                    {/* Sprint 9: Ver Acta oficial */}
                     <button
                         onClick={() => window.location.href = `/audiencia/${audienciaId}/acta`}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all hover:brightness-110"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-110 shrink-0"
                         style={{
                             background: 'var(--accent-gold)',
                             color: 'white',
-                            borderColor: 'transparent',
+                            border: '1px solid transparent',
                         }}
                     >
-                        <span className="hidden sm:inline">📄 Redactar Acta</span>
-                        <span className="sm:hidden">📄</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                        <span className="hidden sm:inline">Redactar Acta</span>
                     </button>
                 </div>
             </header>
@@ -389,109 +383,129 @@ export default function PaginaTranscripcion() {
             <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
                 {/* ── Canvas (Main Area) ────────────────────────── */}
                 <div className="flex-1 flex flex-col min-w-0 min-h-0">
-                    {/* Audio source selector */}
-                    {mostrarSelector && !isTranscribing && (
+                    {/* Control strip — altura fija para evitar saltos de layout */}
+                    {(mostrarSelector || isInitializing || isTranscribing || isPaused) && (
                         <div
-                            className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 shrink-0"
-                            style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}
+                            className="px-4 sm:px-6 shrink-0 flex items-center gap-3"
+                            style={{
+                                height: '52px',
+                                borderBottom: '1px solid var(--border-subtle)',
+                                background: 'var(--bg-secondary)',
+                            }}
                         >
-                            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                                Fuente de audio:
-                            </span>
-                            <div className="flex gap-2 w-full sm:w-auto">
-                                {([
-                                    { value: 'microphone' as const, label: '🎙️ Mic', desc: 'Directo' },
-                                    { value: 'system' as const, label: '🖥️ Sis', desc: 'Virtual' },
-                                ]).map(src => (
+                            {/* Estado: selector de fuente o conectando */}
+                            {(mostrarSelector || isInitializing) && !isTranscribing && !isPaused && (
+                                <>
+                                    <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                        Fuente:
+                                    </span>
+                                    <div className="flex gap-1.5">
+                                        {([
+                                            { value: 'microphone' as const, icon: (
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                                    <line x1="12" y1="19" x2="12" y2="23"/>
+                                                    <line x1="8" y1="23" x2="16" y2="23"/>
+                                                </svg>
+                                            ), label: 'Micrófono' },
+                                            { value: 'system' as const, icon: (
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                                    <line x1="8" y1="21" x2="16" y2="21"/>
+                                                    <line x1="12" y1="17" x2="12" y2="21"/>
+                                                </svg>
+                                            ), label: 'Sistema' },
+                                        ]).map(src => (
+                                            <button
+                                                key={src.value}
+                                                onClick={() => !isInitializing && setFuenteAudio(src.value)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
+                                                style={{
+                                                    background: fuenteAudio === src.value ? 'var(--accent-gold-soft)' : 'var(--bg-surface)',
+                                                    border: `1px solid ${fuenteAudio === src.value ? 'rgba(166,130,70,0.35)' : 'var(--border-default)'}`,
+                                                    color: fuenteAudio === src.value ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                                                    opacity: isInitializing ? 0.5 : 1,
+                                                }}
+                                            >
+                                                {src.icon}
+                                                <span className="hidden sm:inline">{src.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
                                     <button
-                                        key={src.value}
-                                        onClick={() => setFuenteAudio(src.value)}
-                                        className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 rounded-xl text-xs transition-all"
+                                        onClick={iniciarTranscripcion}
+                                        disabled={isInitializing}
+                                        className="ml-auto px-5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-110 disabled:opacity-70"
                                         style={{
-                                            background: fuenteAudio === src.value ? 'var(--accent-gold-soft)' : 'var(--bg-surface)',
-                                            border: `1px solid ${fuenteAudio === src.value ? 'rgba(212, 168, 83, 0.4)' : 'var(--border-default)'}`,
-                                            color: fuenteAudio === src.value ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                                            background: 'var(--accent-gold)',
+                                            color: 'white',
                                         }}
                                     >
-                                        <span className="block font-medium">{src.label}</span>
+                                        {isInitializing ? 'Conectando...' : 'Iniciar'}
                                     </button>
-                                ))}
-                            </div>
-                            <button
-                                onClick={iniciarTranscripcion}
-                                className="w-full sm:w-auto sm:ml-auto px-6 py-2.5 rounded-xl text-sm font-semibold transition-all hover:brightness-110"
-                                style={{
-                                    background: 'linear-gradient(135deg, var(--accent-gold), #C49640)',
-                                    color: 'var(--bg-primary)',
-                                    boxShadow: '0 4px 15px rgba(212, 168, 83, 0.25)',
-                                }}
-                            >
-                                Iniciar Transcripción
-                            </button>
-                        </div>
-                    )}
+                                </>
+                            )}
 
-                    {/* Recording controls */}
-                    {(isTranscribing || isPaused) && (
-                        <div
-                            className="px-4 sm:px-6 py-3 flex items-center justify-between gap-4 shrink-0"
-                            style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}
-                        >
-                            <div className="flex items-center gap-2">
-                                {isPaused ? (
-                                    <>
-                                        <span className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm" style={{ background: '#F59E0B' }} />
-                                        <span className="text-xs font-medium" style={{ color: '#F59E0B' }}>
-                                            Pausado
-                                        </span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <span className="w-2 h-2 sm:w-3 sm:h-3 rounded-full animate-pulse" style={{ background: 'var(--danger)' }} />
-                                        <span className="text-xs font-medium" style={{ color: 'var(--danger)' }}>
-                                            Grabando...
-                                        </span>
-                                    </>
-                                )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {isPaused ? (
-                                    <button
-                                        onClick={reanudarTranscripcion}
-                                        className="px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all"
-                                        style={{
-                                            background: 'rgba(34, 197, 94, 0.15)',
-                                            color: '#22C55E',
-                                            border: '1px solid rgba(34, 197, 94, 0.3)',
-                                        }}
-                                    >
-                                        ▶ Reanudar
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={pausarTranscripcion}
-                                        className="px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all"
-                                        style={{
-                                            background: 'rgba(245, 158, 11, 0.15)',
-                                            color: '#F59E0B',
-                                            border: '1px solid rgba(245, 158, 11, 0.3)',
-                                        }}
-                                    >
-                                        ⏸ Pausar
-                                    </button>
-                                )}
-                                <button
-                                    onClick={detenerTranscripcion}
-                                    className="px-4 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all"
-                                    style={{
-                                        background: 'rgba(230, 57, 70, 0.15)',
-                                        color: 'var(--danger)',
-                                        border: '1px solid rgba(230, 57, 70, 0.3)',
-                                    }}
-                                >
-                                    ■ Detener
-                                </button>
-                            </div>
+                            {/* Estado: grabando o pausado */}
+                            {(isTranscribing || isPaused) && (
+                                <>
+                                    <div className="flex items-center gap-2">
+                                        {isPaused ? (
+                                            <>
+                                                <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: '#F59E0B' }} />
+                                                <span className="text-xs font-medium" style={{ color: '#F59E0B' }}>Pausado</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span className="w-2 h-2 rounded-full animate-pulse shrink-0" style={{ background: 'var(--danger)' }} />
+                                                <span className="text-xs font-medium" style={{ color: 'var(--danger)' }}>Grabando</span>
+                                            </>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 ml-auto">
+                                        {isPaused ? (
+                                            <button
+                                                onClick={reanudarTranscripcion}
+                                                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                                                style={{
+                                                    background: 'rgba(34,197,94,0.12)',
+                                                    color: '#22C55E',
+                                                    border: '1px solid rgba(34,197,94,0.25)',
+                                                }}
+                                            >
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                                <span className="hidden sm:inline">Reanudar</span>
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={pausarTranscripcion}
+                                                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                                                style={{
+                                                    background: 'rgba(245,158,11,0.12)',
+                                                    color: '#F59E0B',
+                                                    border: '1px solid rgba(245,158,11,0.25)',
+                                                }}
+                                            >
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                                                <span className="hidden sm:inline">Pausar</span>
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={detenerTranscripcion}
+                                            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                                            style={{
+                                                background: 'rgba(155,34,38,0.1)',
+                                                color: 'var(--danger)',
+                                                border: '1px solid rgba(155,34,38,0.2)',
+                                            }}
+                                        >
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                                            <span className="hidden sm:inline">Detener</span>
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
 
@@ -531,18 +545,26 @@ export default function PaginaTranscripcion() {
                             { id: 'hablantes' as const, label: 'Hablantes' },
                             { id: 'marcadores' as const, label: 'Marcadores' },
                             { id: 'frases' as const, label: 'Frases' },
-                            { id: 'variables' as const, label: varDetecciones.length > 0 ? `Vars ${varDetecciones.length}` : 'Vars' },
+                            { id: 'variables' as const, label: 'Variables', badge: varDetecciones.length > 0 ? varDetecciones.length : null },
                         ]).map(tab => (
                             <button
                                 key={tab.id}
                                 onClick={() => setPestanaSidebar(tab.id)}
-                                className="flex-1 py-2.5 text-[9px] sm:text-[10px] font-medium uppercase tracking-wider transition-colors"
+                                className="flex-1 flex items-center justify-center gap-1 py-2.5 text-[9px] sm:text-[10px] font-medium uppercase tracking-wider transition-colors"
                                 style={{
                                     color: pestanaSidebar === tab.id ? 'var(--accent-gold)' : 'var(--text-muted)',
                                     borderBottom: pestanaSidebar === tab.id ? '2px solid var(--accent-gold)' : '2px solid transparent',
                                 }}
                             >
                                 {tab.label}
+                                {tab.badge && (
+                                    <span
+                                        className="w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center"
+                                        style={{ background: 'var(--accent-gold)', color: 'white' }}
+                                    >
+                                        {tab.badge}
+                                    </span>
+                                )}
                             </button>
                         ))}
                     </div>

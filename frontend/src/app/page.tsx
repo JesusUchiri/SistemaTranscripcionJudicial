@@ -75,8 +75,8 @@ export default function DashboardPage() {
         }
     }, [])
 
-    const handleLogout = () => {
-        logout()
+    const handleLogout = async () => {
+        await logout()
         router.replace('/login')
     }
 
@@ -316,6 +316,8 @@ export default function DashboardPage() {
                                                 return (
                                                     <tr
                                                         key={a.id}
+                                                        onClick={() => router.push(`/audiencia/${a.id}`)}
+                                                        className="cursor-pointer transition-colors hover:bg-[rgba(166,130,70,0.04)]"
                                                         style={!esUltima ? { borderBottom: '1px solid var(--border-subtle)' } : {}}
                                                     >
                                                         <td className="px-5 py-3.5">
@@ -351,7 +353,7 @@ export default function DashboardPage() {
                                                                 {estadoCfg.label}
                                                             </span>
                                                         </td>
-                                                        <td className="px-5 py-3.5">
+                                                        <td className="px-5 py-3.5" onClick={e => e.stopPropagation()}>
                                                             <div className="flex items-center gap-2">
                                                                 <button
                                                                     onClick={() => router.push(`/audiencia/${a.id}`)}
