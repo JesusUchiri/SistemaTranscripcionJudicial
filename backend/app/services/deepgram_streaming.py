@@ -50,7 +50,7 @@ class DeepgramStreamingService:
         """Establish async connection to Deepgram using the Python SDK."""
         try:
             self._connection_ctx = self._client.listen.v1.connect(
-                model="nova-2",
+                model=settings.DEEPGRAM_MODEL,
                 language="es",
                 encoding="linear16",
                 sample_rate="16000",
@@ -69,7 +69,7 @@ class DeepgramStreamingService:
             self._listen_task = asyncio.create_task(self._listen_loop())
             self._listen_task.add_done_callback(self._on_listen_task_done)
 
-            logger.info("Connected to Deepgram with model: nova-2")
+            logger.info(f"Connected to Deepgram with model: {settings.DEEPGRAM_MODEL}")
 
         except Exception as e:
             logger.error(f"Failed to connect to Deepgram: {e}", exc_info=True)

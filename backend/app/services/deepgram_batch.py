@@ -65,7 +65,7 @@ class DeepgramBatchService:
 
         response = await self.client.listen.v1.media.transcribe_file(
             request=audio_bytes,
-            model="nova-2",
+            model=settings.DEEPGRAM_MODEL,
             language="es-419",
             smart_format=True,
             diarize=True,
