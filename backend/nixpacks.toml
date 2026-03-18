@@ -1,5 +1,9 @@
 # Nixpacks configuration for JudiScribe backend
-# xhtml2pdf → svglib → rlpycairo → pycairo requiere libcairo2-dev
+# xhtml2pdf → svglib → rlpycairo → pycairo requiere libcairo2-dev + libxcb1-dev
+# CPATH=/usr/include hace que el gcc de Nix encuentre los headers de apt
 
 [phases.setup]
 aptPkgs = ["libcairo2-dev", "libxcb1-dev", "pkg-config", "libffi-dev"]
+
+[variables]
+CPATH = "/usr/include"
