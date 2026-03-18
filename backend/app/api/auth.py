@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_role
+from app.config import settings
 from app.database import get_db
 from app.models.usuario import Usuario
 from app.schemas.auth import (
@@ -54,13 +55,14 @@ async def login(
     access_token = create_access_token(user.id, user.rol)
     refresh_token = create_refresh_token(user.id)
 
-    # Set refresh token as httpOnly cookie
+    # En producción (HTTPS + dominios cruzados): secure=True, samesite="none"
+    is_production = settings.ENVIRONMENT == "production"
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,  # True in production with HTTPS
-        samesite="lax",
+        secure=is_production,
+        samesite="none" if is_production else "lax",
         max_age=7 * 24 * 3600,  # 7 days
     )
 
