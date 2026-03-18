@@ -220,9 +220,12 @@ class InjectCORSHeadersMiddleware:
             if message["type"] == "http.response.start" and allow_origin:
                 headers = list(message.get("headers", []))
                 has_origin = any(h[0].lower() == b"access-control-allow-origin" for h in headers)
+                has_credentials = any(h[0].lower() == b"access-control-allow-credentials" for h in headers)
                 if not has_origin:
                     headers.append((b"access-control-allow-origin", allow_origin.encode()))
+                if not has_credentials:
                     headers.append((b"access-control-allow-credentials", b"true"))
+                if not has_origin or not has_credentials:
                     message = {**message, "headers": headers}
             await send(message)
 
@@ -245,9 +248,9 @@ app.add_middleware(InjectCORSHeadersMiddleware, allowed_origins=_cors_origins)
 def _cors_headers(origin: Optional[str]) -> dict:
     """Cabeceras CORS para respuestas de error (el navegador las necesita siempre)."""
     if origin and origin.rstrip("/") in [o.rstrip("/") for o in _cors_origins]:
-        return {"Access-Control-Allow-Origin": origin}
+        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true"}
     if _cors_origins:
-        return {"Access-Control-Allow-Origin": _cors_origins[0]}
+        return {"Access-Control-Allow-Origin": _cors_origins[0], "Access-Control-Allow-Credentials": "true"}
     return {}
 
 
