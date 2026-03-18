@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # ── Deepgram ─────────────────────────────────────────
     DEEPGRAM_API_KEY: str = ""
-    DEEPGRAM_MODEL: str = "nova-3"  # Mejor modelo disponible
+    DEEPGRAM_MODEL: str = "nova-2"
 
     # ── Anthropic ────────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
