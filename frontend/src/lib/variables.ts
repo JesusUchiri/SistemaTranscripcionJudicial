@@ -145,7 +145,7 @@ export function valorDeAudiencia(
         const raw = audiencia[variable.field]
         if (!raw) return ''
         if (raw instanceof Date || (typeof raw === 'string' && raw.includes('T'))) {
-            try { return new Date(raw).toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' }) } catch { return raw }
+            try { return new Date(raw).toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' }) } catch { return String(raw) }
         }
         return String(raw)
     }
