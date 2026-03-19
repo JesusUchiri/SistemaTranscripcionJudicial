@@ -13,7 +13,7 @@
  * - PanelHablantes → Canvas: al cambiar rol, etiqueta/color se propagan
  * - AtajosFrases → Canvas: inserción con Ctrl+[0-9]
  */
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { AuthGuard } from '@/components/auth/AuthGuard'
 import { useAuthStore } from '@/stores/authStore'
@@ -107,6 +107,7 @@ export default function PaginaTranscripcion() {
     const canvasRef = useRef<TranscriptionCanvasHandle>(null)
     const reproductorRef = useRef<ReproductorAudioHandle>(null)
     const temporizadorRef = useRef<NodeJS.Timeout | null>(null)
+    const prevTranscribingRef = useRef(false)
 
     /* ── Load audiencia ─────────────────────────────── */
 
@@ -199,9 +200,45 @@ export default function PaginaTranscripcion() {
         }
     }, [isTranscribing, setElapsedSeconds])
 
+    /* ── Refresh audiencia after transcription stops (to get audio_path) ── */
+    // Polls until estado="transcrita" so we know the backend finalized the WAV file.
+
+    useEffect(() => {
+        const wasTranscribing = prevTranscribingRef.current
+        prevTranscribingRef.current = isTranscribing
+
+        if (!wasTranscribing || isTranscribing || isPaused) return
+
+        let attempts = 0
+        let timerId: ReturnType<typeof setTimeout> | null = null
+
+        const poll = async () => {
+            attempts++
+            try {
+                const { data } = await api.get<Audiencia>(`/api/audiencias/${audienciaId}`)
+                setAudiencia(data)
+                if (data.estado === 'transcrita' || data.estado === 'finalizada') return
+            } catch (err) {
+                console.error('Error refreshing audiencia after stop:', err)
+            }
+            if (attempts < 10) {
+                timerId = setTimeout(poll, 2000)
+            }
+        }
+
+        // Primer intento a los 2s
+        timerId = setTimeout(poll, 2000)
+        return () => { if (timerId) clearTimeout(timerId) }
+    }, [isTranscribing, isPaused, audienciaId])
+
     /* ── Speaker IDs detected ──────────────────────── */
 
-    const speakersDetectados = Array.from(new Set(segments.map(s => s.speaker_id)))
+    const speakersDetectados = useMemo(
+        () => Array.from(new Set(segments.map(s => s.speaker_id))),
+        // Solo recalcular cuando realmente cambia la lista de speaker_ids únicos
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [segments.map(s => s.speaker_id).join(',')]
+    )
 
     /* ── Start/Stop transcription ──────────────────── */
 
@@ -267,6 +304,134 @@ export default function PaginaTranscripcion() {
             return [...prev, hablante]
         })
     }, [])
+
+    // Speaker change in canvas → update segments + merge if adjacent same speaker
+    const handleSpeakerCambiado = useCallback(async (firstSegmentId: string, newSpeakerId: string) => {
+        const store = useCanvasStore.getState()
+        const segs = store.segments
+
+        const startIdx = segs.findIndex(s => s.id === firstSegmentId)
+        if (startIdx === -1) return
+
+        const currentSpeakerId = segs[startIdx].speaker_id
+        if (currentSpeakerId === newSpeakerId) return
+
+        // Collect the speaker group starting at firstSegmentId
+        const groupIds: string[] = []
+        for (let i = startIdx; i < segs.length; i++) {
+            if (segs[i].speaker_id !== currentSpeakerId) break
+            groupIds.push(segs[i].id)
+        }
+
+        // Optimistic update in store
+        store.updateSegmentsSpeaker(groupIds, newSpeakerId)
+
+        // Update backend
+        try {
+            await Promise.all(
+                groupIds.map(id =>
+                    api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { speaker_id: newSpeakerId })
+                )
+            )
+        } catch (err) {
+            console.error('Error actualizando speaker_id:', err)
+            return
+        }
+
+        // Check if adjacent groups have the same speaker → merge
+        const updatedSegs = useCanvasStore.getState().segments
+        const newStartIdx = updatedSegs.findIndex(s => s.id === firstSegmentId)
+        if (newStartIdx === -1) return
+
+        // Collect current group again
+        const currentGroupIds: string[] = []
+        for (let i = newStartIdx; i < updatedSegs.length; i++) {
+            if (updatedSegs[i].speaker_id !== newSpeakerId) break
+            currentGroupIds.push(updatedSegs[i].id)
+        }
+
+        // Check prev segment for same speaker
+        const prevIds: string[] = []
+        if (newStartIdx > 0 && updatedSegs[newStartIdx - 1].speaker_id === newSpeakerId) {
+            const prevSpeaker = newSpeakerId
+            for (let i = newStartIdx - 1; i >= 0; i--) {
+                if (updatedSegs[i].speaker_id !== prevSpeaker) break
+                prevIds.unshift(updatedSegs[i].id)
+            }
+        }
+
+        // Check next segment for same speaker
+        const afterIdx = newStartIdx + currentGroupIds.length
+        const nextIds: string[] = []
+        if (afterIdx < updatedSegs.length && updatedSegs[afterIdx].speaker_id === newSpeakerId) {
+            for (let i = afterIdx; i < updatedSegs.length; i++) {
+                if (updatedSegs[i].speaker_id !== newSpeakerId) break
+                nextIds.push(updatedSegs[i].id)
+            }
+        }
+
+        const toMerge = [...prevIds, ...currentGroupIds, ...nextIds]
+        if (toMerge.length > 1) {
+            try {
+                const { data: merged } = await api.post<Segmento>(
+                    `/api/audiencias/${audienciaId}/segmentos/merge`,
+                    { segment_ids: toMerge }
+                )
+                store.replaceSegments(toMerge, merged)
+            } catch (err) {
+                console.error('Error fusionando segmentos:', err)
+            }
+        }
+    }, [audienciaId])
+
+    // Reasignar segmentos seleccionados a un nuevo speaker (desde selection toolbar)
+    const handleReasignarSegmentos = useCallback(async (segmentIds: string[], newSpeakerId: string) => {
+        const store = useCanvasStore.getState()
+        // Optimistic update
+        store.updateSegmentsSpeaker(segmentIds, newSpeakerId)
+        // Persist to backend
+        try {
+            await Promise.all(
+                segmentIds.map(id =>
+                    api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { speaker_id: newSpeakerId })
+                )
+            )
+        } catch (err) {
+            console.error('Error reasignando segmentos:', err)
+            return
+        }
+        // Detect and merge adjacent same-speaker groups
+        const segs = useCanvasStore.getState().segments
+        // For each changed segment, check neighbors
+        const allToMerge = new Set<string>()
+        for (const segId of segmentIds) {
+            const idx = segs.findIndex(s => s.id === segId)
+            if (idx === -1) continue
+            // Collect contiguous block around this segment with same speaker
+            const block: string[] = [segId]
+            for (let i = idx - 1; i >= 0 && segs[i].speaker_id === newSpeakerId; i--)
+                block.unshift(segs[i].id)
+            for (let i = idx + 1; i < segs.length && segs[i].speaker_id === newSpeakerId; i++)
+                block.push(segs[i].id)
+            if (block.length > 1) block.forEach(id => allToMerge.add(id))
+        }
+        const mergeList = Array.from(allToMerge)
+        if (mergeList.length > 1) {
+            try {
+                const { data: merged } = await api.post<Segmento>(
+                    `/api/audiencias/${audienciaId}/segmentos/merge`,
+                    { segment_ids: mergeList }
+                )
+                store.replaceSegments(mergeList, merged)
+            } catch (err) {
+                console.error('Error fusionando segmentos:', err)
+            }
+        }
+    }, [audienciaId])
+
+    // Undo/Redo via canvas ref
+    const handleUndo = useCallback(() => canvasRef.current?.undo(), [])
+    const handleRedo = useCallback(() => canvasRef.current?.redo(), [])
 
     // Insert frase from sidebar
     const insertarFraseEnCanvas = useCallback((texto: string) => {
@@ -509,12 +674,55 @@ export default function PaginaTranscripcion() {
                         </div>
                     )}
 
+                    {/* Editing toolbar — visible solo en modo edición (transcripción inactiva) */}
+                    {!isTranscribing && !isPaused && !mostrarSelector && segments.length > 0 && (
+                        <div
+                            className="px-4 sm:px-6 shrink-0 flex items-center gap-1"
+                            style={{
+                                height: '36px',
+                                borderBottom: '1px solid var(--border-subtle)',
+                                background: 'var(--bg-secondary)',
+                            }}
+                        >
+                            <button
+                                onClick={handleUndo}
+                                title="Deshacer (Ctrl+Z)"
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-medium transition-all hover:brightness-110"
+                                style={{
+                                    background: 'var(--bg-surface)',
+                                    border: '1px solid var(--border-subtle)',
+                                    color: 'var(--text-secondary)',
+                                }}
+                            >
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
+                                </svg>
+                                <span className="hidden sm:inline">Deshacer</span>
+                            </button>
+                            <button
+                                onClick={handleRedo}
+                                title="Rehacer (Ctrl+Shift+Z)"
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-medium transition-all hover:brightness-110"
+                                style={{
+                                    background: 'var(--bg-surface)',
+                                    border: '1px solid var(--border-subtle)',
+                                    color: 'var(--text-secondary)',
+                                }}
+                            >
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>
+                                </svg>
+                                <span className="hidden sm:inline">Rehacer</span>
+                            </button>
+                        </div>
+                    )}
+
                     {/* Canvas TipTap */}
                     <div className="flex-1 relative flex flex-col min-h-0">
-                        <RevisionBatchPanel 
-                            segmentos={segments} 
-                            onAceptar={handleAceptarBatch} 
-                            onAplicarBatch={handleAplicarMultiplesBatch} 
+                        <RevisionBatchPanel
+                            segmentos={segments}
+                            onAceptar={handleAceptarBatch}
+                            onAplicarBatch={handleAplicarMultiplesBatch}
                         />
                         <TranscriptionCanvas
                             ref={canvasRef}
@@ -522,6 +730,8 @@ export default function PaginaTranscripcion() {
                             hablantes={hablantesData}
                             onSegmentoEditado={handleSegmentoEditado}
                             onSeekAudio={handleSeekAudio}
+                            onSpeakerCambiado={handleSpeakerCambiado}
+                            onReasignarSegmentos={handleReasignarSegmentos}
                         />
                     </div>
 

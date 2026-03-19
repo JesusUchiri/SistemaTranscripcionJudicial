@@ -22,9 +22,11 @@ export function useDeepgramSocket(audienciaId: string) {
     const {
         addSegment,
         updateProvisional,
+        clearProvisional,
         setConnectionStatus,
         setTranscribing,
         addVarDeteccion,
+        replaceSegments,
     } = useCanvasStore()
 
     /** Intenta detectar variables en el texto de un segmento final */
@@ -87,13 +89,39 @@ export function useDeepgramSocket(audienciaId: string) {
                                 timestamp_inicio: msg.start,
                                 timestamp_fin: msg.end,
                                 confianza: msg.confidence,
-                                es_provisional: false,
+                                es_provisional: !!(msg as any).is_intermediate, // Usado para asegurar que los fragmentos intermediarios se extiendan
                                 editado_por_usuario: false,
                                 fuente: 'streaming',
                                 orden: useCanvasStore.getState().segmentCount + 1,
                                 palabras_json: msg.words,
                             }
-                            addSegment(segment)
+
+                            // Si este segmento reemplaza a intermedios, hacer la sustitución
+                            const replacesIds: string[] = (data as any).replaces || []
+                            if (replacesIds.length > 0) {
+                                replaceSegments(replacesIds, segment)
+                                // NOTA: No limpiar provisional aquí, porque Claude puede
+                                // demorar 2s, y el usuario podría ya estar hablando palabras nuevas.
+                            } else {
+                                addSegment(segment)
+                                // Trim provisional instead of wiping — preserve words BEYOND the confirmed
+                                // segment. This prevents "reduction" when non-finals are in-flight (~200-500ms
+                                // ahead of finals): user sees e.g. 10 provisional words, 6 get confirmed,
+                                // remaining 4 stay visible as provisional rather than disappearing.
+                                const provState = useCanvasStore.getState()
+                                const provWords = provState.provisionalWords
+                                const confirmedWordCount = (segment.texto_ia || '').trim().split(/\s+/).filter(Boolean).length
+                                const remainingWords = provWords.slice(confirmedWordCount)
+                                if (remainingWords.length > 0) {
+                                    updateProvisional(
+                                        remainingWords.map(w => w.word).join(' '),
+                                        msg.speaker,
+                                        remainingWords,
+                                    )
+                                } else {
+                                    clearProvisional()
+                                }
+                            }
                         } else {
                             // Provisional — update the floating text with word-level data
                             updateProvisional(msg.text, msg.speaker, msg.words || [])
@@ -147,7 +175,7 @@ export function useDeepgramSocket(audienciaId: string) {
             console.error('WebSocket error event:', e)
             setError('Error de conexión WebSocket')
         }
-    }, [audienciaId, addSegment, updateProvisional, setConnectionStatus, detectarVariables])
+    }, [audienciaId, addSegment, updateProvisional, clearProvisional, setConnectionStatus, detectarVariables, replaceSegments])
 
     const sendAudio = useCallback(
         (base64Data: string, sequence: number) => {

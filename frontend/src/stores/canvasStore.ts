@@ -67,6 +67,8 @@ interface CanvasState {
     removeBookmark: (id: string) => void
 
     setSegments: (segments: Segmento[]) => void
+    replaceSegments: (oldIds: string[], newSegment: Segmento) => void
+    updateSegmentsSpeaker: (segmentIds: string[], newSpeakerId: string) => void
     reset: () => void
 }
 
@@ -271,11 +273,58 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             bookmarks: state.bookmarks.filter((b) => b.id !== id),
         })),
 
-    setSegments: (segments) => set({ 
+    setSegments: (segments) => set({
         segments,
         segmentCount: segments.length,
         wordCount: segments.reduce((acc, s) => acc + (s.texto_editado || s.texto_mejorado || s.texto_ia).split(/\s+/).length, 0)
     }),
+
+    replaceSegments: (oldIds, newSegment) =>
+        set((state) => {
+            const firstIndex = state.segments.findIndex(s => oldIds.includes(s.id))
+            const filtered = state.segments.filter(s => !oldIds.includes(s.id))
+
+            const isDuplicate = filtered.some(s =>
+                s.texto_ia.trim() === newSegment.texto_ia.trim() &&
+                s.speaker_id === newSegment.speaker_id &&
+                Math.abs((s.timestamp_inicio || 0) - (newSegment.timestamp_inicio || 0)) < 1.0
+            )
+
+            if (isDuplicate) {
+                return {
+                    segments: filtered,
+                    segmentCount: filtered.length,
+                    wordCount: filtered.reduce(
+                        (acc, s) => acc + (s.texto_editado || s.texto_mejorado || s.texto_ia).split(/\s+/).length, 0
+                    ),
+                }
+            }
+
+            const insertAt = firstIndex >= 0 ? Math.min(firstIndex, filtered.length) : filtered.length
+            const newSegments = [
+                ...filtered.slice(0, insertAt),
+                newSegment,
+                ...filtered.slice(insertAt),
+            ]
+
+            const totalWords = newSegments.reduce(
+                (acc, s) => acc + (s.texto_editado || s.texto_mejorado || s.texto_ia).split(/\s+/).length, 0
+            )
+
+            return {
+                segments: newSegments,
+                segmentCount: newSegments.length,
+                wordCount: totalWords,
+                lastConsolidatedSegmentId: newSegment.id
+            }
+        }),
+
+    updateSegmentsSpeaker: (segmentIds, newSpeakerId) =>
+        set((state) => ({
+            segments: state.segments.map(s =>
+                segmentIds.includes(s.id) ? { ...s, speaker_id: newSpeakerId } : s
+            ),
+        })),
 
     reset: () =>
         set({

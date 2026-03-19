@@ -82,6 +82,8 @@ export interface TranscriptionCanvasHandle {
     getEditor: () => ReturnType<typeof useEditor>
     scrollToEnd: () => void
     scrollToSegment: (segmentId: string) => void
+    undo: () => void
+    redo: () => void
 }
 
 interface HablanteInfo {
@@ -109,6 +111,13 @@ interface PopoverState {
     alternatives: Array<{ word: string; confidence: number }>  // Alternativas de Deepgram
 }
 
+interface SpeakerPopoverState {
+    isOpen: boolean
+    firstSegmentId: string
+    currentSpeakerId: string
+    screenPos: { x: number; y: number }
+}
+
 interface CanvasProps {
     /** Si true, el Canvas está en modo solo-lectura (grabación activa). */
     soloLectura: boolean
@@ -122,6 +131,50 @@ interface CanvasProps {
     currentAudioTime?: number
     /** Document header info for the Word-like view. */
     documentInfo?: DocumentInfo
+    /** Callback cuando el digitador cambia el hablante de un grupo de segmentos (click en label). */
+    onSpeakerCambiado?: (firstSegmentId: string, newSpeakerId: string) => void
+    /** Callback cuando el digitador reasigna segmentos seleccionados a un hablante. */
+    onReasignarSegmentos?: (segmentIds: string[], newSpeakerId: string) => void
+}
+
+/* ── Render helper: texto mejorado + confidence marks ── */
+/**
+ * Renders a segment using the improved text (texto_mejorado/texto_ia) for display,
+ * but uses palabras_json only for confidence lookups.
+ * This ensures Claude's capitalization and punctuation are always visible.
+ */
+function renderSegmentWords(
+    texto: string,
+    palabrasJson: any[] | null,
+    segId: string,
+): string {
+    if (!texto) return ''
+
+    // Build a confidence lookup from palabras_json: normalized-word → min confidence
+    const confMap = new Map<string, number>()
+    if (palabrasJson && palabrasJson.length > 0) {
+        for (const w of palabrasJson) {
+            const key = (w.word || '').toLowerCase().replace(/[.,;:!?¡¿«»\-]/g, '')
+            if (key && (confMap.get(key) === undefined || w.confidence < confMap.get(key)!)) {
+                confMap.set(key, w.confidence)
+            }
+        }
+    }
+
+    const words = texto.trim().split(/\s+/)
+    return words.map(wordText => {
+        const key = wordText.toLowerCase().replace(/[.,;:!?¡¿«»\-]/g, '')
+        const conf = confMap.size > 0 ? (confMap.get(key) ?? 1.0) : 1.0
+        const shouldMark = conf < 0.85 &&
+            !GRAMMAR_WORDS.has(key) &&
+            !KNOWN_LEGAL_TERMS.has(key) &&
+            key.length > 2
+        if (shouldMark) {
+            const confPercent = Math.round(conf * 100)
+            return `<span class="text-low-confidence" data-low-confidence="true" data-confidence="${conf}" data-segment-id="${segId}" title="Confianza: ${confPercent}%">${wordText}</span>`
+        }
+        return wordText
+    }).join(' ') + ' '
 }
 
 /* ── Debounce util ──────────────────────────────────── */
@@ -145,6 +198,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
     onSeekAudio,
     currentAudioTime = 0,
     documentInfo,
+    onSpeakerCambiado,
+    onReasignarSegmentos,
 }, ref) => {
     const {
         segments,
@@ -169,10 +224,28 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         alternatives: [],
     })
 
+    const [speakerPopover, setSpeakerPopover] = useState<SpeakerPopoverState>({
+        isOpen: false,
+        firstSegmentId: '',
+        currentSpeakerId: '',
+        screenPos: { x: 0, y: 0 },
+    })
+
+    const [selectionToolbar, setSelectionToolbar] = useState<{
+        isActive: boolean
+        segmentIds: string[]
+        pos: { x: number; y: number }
+    }>({ isActive: false, segmentIds: [], pos: { x: 0, y: 0 } })
+
     const prevSegmentCountRef = useRef(0)
+    const prevSegmentIdsRef = useRef<string[]>([])
+    const prevHablantesJSONRef = useRef("")
     const prevProvisionalWordCountRef = useRef(0)
     const autoScrollRef = useRef(true)
     const containerRef = useRef<HTMLDivElement>(null)
+    // Tracks last confirmed segment speaker — read by provisional effect without adding
+    // `segments` to its deps (which would cause provisional re-insertion on each segment add).
+    const lastConfirmedSpeakerRef = useRef<string | null>(null)
 
     // Build speaker lookup map for O(1) access
     const speakerMap = useMemo(() => {
@@ -234,6 +307,20 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
             },
             handleClick: (view, pos, event) => {
                 const target = event.target as HTMLElement
+
+                // 0. Check for speaker-label clicks (change speaker assignment)
+                const speakerLabelEl = target.closest('speaker-label') as HTMLElement
+                if (speakerLabelEl && onSpeakerCambiado) {
+                    const firstSegmentId = speakerLabelEl.getAttribute('data-first-segment-id') || ''
+                    const currentSpeakerId = speakerLabelEl.getAttribute('data-speaker-id') || ''
+                    setSpeakerPopover({
+                        isOpen: true,
+                        firstSegmentId,
+                        currentSpeakerId,
+                        screenPos: { x: event.clientX, y: event.clientY },
+                    })
+                    return true
+                }
 
                 // 1. Check for low-confidence words
                 const lowConfEl = target.closest('[data-low-confidence="true"]') as HTMLElement
@@ -387,17 +474,156 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
             }
         },
+        undo: () => { editor?.chain().focus().undo().run() },
+        redo: () => { editor?.chain().focus().redo().run() },
     }))
 
-    /* ── Append new segments ────────────────────────── */
+    /* ── Append new segments / Handle replacements ──── */
 
     useEffect(() => {
         if (!editor || segments.length === 0) return
+
+        // Always keep ref up-to-date for provisional speaker-change detection
+        lastConfirmedSpeakerRef.current = segments.at(-1)?.speaker_id ?? null
+
+        const currentIds = segments.map(s => s.id)
+        const prevIds = prevSegmentIdsRef.current
+
+        // Detectar si cambió la info de los hablantes (roles, nombres, colores)
+        const currentHablantesJSON = JSON.stringify(hablantes)
+        const speakersUpdated = prevHablantesJSONRef.current !== "" && prevHablantesJSONRef.current !== currentHablantesJSON
+        prevHablantesJSONRef.current = currentHablantesJSON
+
+        // Detectar si hubo un reemplazo (IDs cambiaron en el medio, no solo al final)
+        const isReplacement = (prevIds.length > 0 && (
+            // Segmentos disminuyeron o IDs cambiaron (no solo append)
+            segments.length < prevIds.length ||
+            prevIds.some((id, i) => i < currentIds.length && currentIds[i] !== id)
+        )) || speakersUpdated
+
+        if (isReplacement) {
+            const missingIds = prevIds.filter(id => !currentIds.includes(id))
+            const addedIds = currentIds.filter(id => !prevIds.includes(id))
+
+            // Reemplazo localizado de segmentos en vivo de Claude
+            if (!speakersUpdated && missingIds.length > 0 && addedIds.length > 0) {
+                let from = -1
+                let to = -1
+                
+                editor.state.doc.descendants((node, pos) => {
+                    if (node.isText && node.marks) {
+                        const segId = node.marks.find(m => m.type.name === 'segment')?.attrs?.segmentId
+                        if (segId && missingIds.includes(segId)) {
+                            if (from === -1) from = pos
+                            to = Math.max(to, pos + node.nodeSize)
+                        }
+                    }
+                })
+
+                if (from !== -1 && to !== -1) {
+                    const htmlParts: string[] = []
+                    const newAddedSegments = segments.filter(s => addedIds.includes(s.id))
+                    
+                    newAddedSegments.forEach((seg) => {
+                        const globalIdx = segments.indexOf(seg)
+                        const prevSeg = globalIdx > 0 ? segments[globalIdx - 1] : null
+                        const newSpeaker = prevSeg?.speaker_id !== seg.speaker_id
+                        const { etiqueta, color } = getSpeakerInfo(seg.speaker_id)
+                        const texto = seg.texto_editado || seg.texto_mejorado || seg.texto_ia
+                        const isEdited = editedSegmentIds.includes(seg.id)
+                        const timestamp = seg.timestamp_inicio || 0
+
+                        const classes = ['segment-clickable', 'segment-confirming']
+                        if (isEdited) classes.push('segment-edited')
+
+                        if (newSpeaker) {
+                            htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}" data-first-segment-id="${seg.id}"></speaker-label>`)
+                        }
+
+                        const segmentHtml = renderSegmentWords(texto, seg.palabras_json, seg.id)
+
+                        const segmentClasses = ['segment-text', ...classes]
+                        htmlParts.push(`<span class="${segmentClasses.join(' ')}" data-segment-id="${seg.id}" data-timestamp="${timestamp}" data-edited="${isEdited}">${segmentHtml}</span>`)
+                    })
+
+                    const html = htmlParts.join(' ')
+                    
+                    // Solo eliminar y reemplazar el pedazo modificado, no todo el documento!
+                    editor.chain()
+                        .deleteRange({ from, to })
+                        .insertContentAt(from, html)
+                        .run()
+
+                    prevSegmentCountRef.current = segments.length
+                    prevSegmentIdsRef.current = currentIds
+                    return
+                }
+            }
+
+            // Fallback: Re-render completo si no pudo hacer reemplazo localizado
+            prevSegmentCountRef.current = segments.length
+            prevSegmentIdsRef.current = currentIds
+            prevProvisionalWordCountRef.current = 0
+
+            const htmlParts: string[] = []
+            segments.forEach((seg, idx) => {
+                const prevSeg = idx > 0 ? segments[idx - 1] : null
+                const newSpeaker = prevSeg?.speaker_id !== seg.speaker_id
+                const { etiqueta, color } = getSpeakerInfo(seg.speaker_id)
+                const texto = seg.texto_editado || seg.texto_mejorado || seg.texto_ia
+                const isEdited = editedSegmentIds.includes(seg.id)
+                const timestamp = seg.timestamp_inicio || 0
+
+                const classes = ['segment-clickable']
+                if (isEdited) classes.push('segment-edited')
+
+                if (newSpeaker) {
+                    htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}" data-first-segment-id="${seg.id}"></speaker-label>`)
+                }
+
+                const segmentHtml = renderSegmentWords(texto, seg.palabras_json, seg.id)
+
+                const segmentClasses = ['segment-text', ...classes]
+                htmlParts.push(`<span class="${segmentClasses.join(' ')}" data-segment-id="${seg.id}" data-timestamp="${timestamp}" data-edited="${isEdited}">${segmentHtml}</span>`)
+            })
+
+            const html = htmlParts.join(' ')
+
+            // Fix scroll jumping on replace
+            const el = containerRef.current
+            const currentScrollTop = el ? el.scrollTop : undefined
+            const currentScrollHeight = el ? el.scrollHeight : undefined
+
+            editor.chain()
+                .removeProvisional()
+                .setContent(html, false)
+                .run()
+            
+            // Inmediate restore scroll if possible to avoid flicker
+            if (el && currentScrollTop !== undefined) {
+                if (!autoScrollRef.current) el.scrollTop = currentScrollTop
+            }
+
+            // Restore scroll position after React/TipTap layout settles
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                if (!el || currentScrollTop === undefined || currentScrollHeight === undefined) return
+                if (autoScrollRef.current) {
+                    el.scrollTop = el.scrollHeight
+                } else {
+                    el.scrollTop = currentScrollTop
+                }
+            }))
+
+            return
+        }
+
+        // Normal flow: solo nuevos segmentos al final
         if (segments.length <= prevSegmentCountRef.current) return
 
         const nuevos = segments.slice(prevSegmentCountRef.current)
         const prevCount = prevSegmentCountRef.current
         prevSegmentCountRef.current = segments.length
+        prevSegmentIdsRef.current = currentIds
 
         // Resetear contador de palabras provisionales
         prevProvisionalWordCountRef.current = 0
@@ -426,26 +652,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}"></speaker-label>`)
             }
 
-            let segmentHtml = ''
-            if (seg.palabras_json && seg.palabras_json.length > 0) {
-                seg.palabras_json.forEach((wordObj: any) => {
-                    const wordText = wordObj.word
-                    const conf = wordObj.confidence
-                    const wordLower = wordText.toLowerCase().replace(/[.,;:!?]/g, '')
-                    const shouldMark = conf < 0.85 &&
-                        !GRAMMAR_WORDS.has(wordLower) &&
-                        !KNOWN_LEGAL_TERMS.has(wordLower) &&
-                        wordLower.length > 2
-                    if (shouldMark) {
-                        const confPercent = Math.round(conf * 100)
-                        segmentHtml += `<span class="text-low-confidence" data-low-confidence="true" data-confidence="${conf}" data-segment-id="${seg.id}" title="Confianza: ${confPercent}%">${wordText}</span> `
-                    } else {
-                        segmentHtml += `${wordText} `
-                    }
-                })
-            } else {
-                segmentHtml = texto + ' '
-            }
+            const segmentHtml = renderSegmentWords(texto, seg.palabras_json, seg.id)
 
             const segmentClasses = ['segment-text', ...classes]
             htmlParts.push(`<span class="${segmentClasses.join(' ')}" data-segment-id="${seg.id}" data-timestamp="${timestamp}" data-edited="${isEdited}">${segmentHtml}</span>`)
@@ -454,7 +661,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         // Una sola transacción: elimina el provisional + inserta el texto confirmado.
         // El texto confirmado aparece con segment-confirming (opacity 0.75→1) creando
         // continuidad visual con el texto provisional (opacity 0.75).
-        const html = htmlParts.join('')
+        const html = htmlParts.join(' ')
         editor.chain()
             .removeProvisional()
             .focus('end', { scrollIntoView: false })
@@ -472,7 +679,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 el.scrollTop = el.scrollHeight
             }
         }))
-    }, [editor, segments, editedSegmentIds, getSpeakerInfo])
+    }, [editor, segments, editedSegmentIds, getSpeakerInfo, hablantes])
 
     /* ── Active segment highlighting during playback ── */
 
@@ -509,28 +716,9 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         const domEl = editor.view.dom.querySelector(`[data-segment-id="${lastConsolidatedSegmentId}"]`) as HTMLElement
         if (!domEl) return
 
-        const { etiqueta, color } = getSpeakerInfo(seg.speaker_id)
+        getSpeakerInfo(seg.speaker_id)  // keep dependency tracked
         const texto = seg.texto_editado || seg.texto_mejorado || seg.texto_ia
-        let newHtml = ''
-        if (seg.palabras_json && seg.palabras_json.length > 0) {
-            seg.palabras_json.forEach((wordObj: any) => {
-                const wordText = wordObj.word
-                const conf = wordObj.confidence
-                const wordLower = wordText.toLowerCase().replace(/[.,;:!?]/g, '')
-                const shouldMark = conf < 0.85 &&
-                    !GRAMMAR_WORDS.has(wordLower) &&
-                    !KNOWN_LEGAL_TERMS.has(wordLower) &&
-                    wordLower.length > 2
-                if (shouldMark) {
-                    const confPercent = Math.round(conf * 100)
-                    newHtml += `<span class="text-low-confidence" data-low-confidence="true" data-confidence="${conf}" data-segment-id="${seg.id}" title="Confianza: ${confPercent}%">${wordText}</span> `
-                } else {
-                    newHtml += `${wordText} `
-                }
-            })
-        } else {
-            newHtml = texto + ' '
-        }
+        const newHtml = renderSegmentWords(texto, seg.palabras_json, seg.id)
         domEl.innerHTML = newHtml
 
         // También removeProvisional porque addSegment lo marcó como consolidado
@@ -545,40 +733,48 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
     useEffect(() => {
         if (!editor) return
 
-        // Sin texto provisional → limpiar y resetear contador
+        // Sin texto provisional → limpiar nodo y resetear contador de palabras vistas.
+        // NOTA: `segments` NO está en los deps de este efecto a propósito.
+        // Antes estaba y causaba que, al llegar un segmento final, este efecto
+        // volviera a correr con el provisionalText viejo (aún sin limpiar) y
+        // re-insertaba el nodo provisional encima del texto confirmado.
         if (!provisionalText || !provisionalText.trim()) {
-            // Si hay nuevos segmentos entrando al mismo tiempo, el efecto de segmentos
-            // ya maneja el removeProvisional en su chain. Aquí solo reseteamos el contador.
-            const hasPendingSegments = segments.length > prevSegmentCountRef.current
-            if (!hasPendingSegments) {
-                editor.commands.removeProvisional()
-            }
+            editor.commands.removeProvisional()   // no-op si ya fue removido
             prevProvisionalWordCountRef.current = 0
             return
         }
 
-        const { color } = getSpeakerInfo(provisionalSpeaker || 'SPEAKER_00')
-        const prevCount = prevProvisionalWordCountRef.current
+        const currentSpeakerId = provisionalSpeaker || 'SPEAKER_00'
+        const { etiqueta, color } = getSpeakerInfo(currentSpeakerId)
 
-        // Construir HTML: palabras ya vistas → sin animación, palabras nuevas → fadeInWord
-        let displayText = provisionalText
-        if (provisionalWords && provisionalWords.length > 0) {
-            displayText = provisionalWords.map((w, i) =>
-                i >= prevCount
-                    ? `<span class="provisional-word">${w.word}</span>`
-                    : `<span class="provisional-word--stable">${w.word}</span>`
-            ).join(' ')
-            prevProvisionalWordCountRef.current = provisionalWords.length
-        }
+        // Show speaker label when the provisional speaker differs from the last confirmed speaker.
+        // lastConfirmedSpeakerRef is updated in the segments effect (no dep needed here).
+        const isSpeakerChange = lastConfirmedSpeakerRef.current !== null &&
+            currentSpeakerId !== lastConfirmedSpeakerRef.current
+        const speakerLabel = isSpeakerChange ? etiqueta : ''
+
+        // Palabras actuales: preferir provisionalWords (con datos de Deepgram),
+        // fallback a split del texto crudo.
+        const words = (provisionalWords && provisionalWords.length > 0)
+            ? provisionalWords.map(w => w.word)
+            : (provisionalText || '').trim().split(/\s+/).filter(Boolean)
+
+        // prevCount = cuántas palabras ya estaban en pantalla (no se animan de nuevo)
+        const prevCount = Math.min(prevProvisionalWordCountRef.current, words.length)
 
         const attrs = {
-            text: displayText,
-            speakerId: provisionalSpeaker || 'SPEAKER_00',
+            words,
+            prevCount,
+            speakerId: currentSpeakerId,
             color,
+            speakerLabel,
         }
 
-        // Intentar actualizar in-place (no destruye el DOM, no reinicia animaciones)
-        // Si no existe nodo provisional, insertarlo al final
+        // Actualizar ref ANTES del DOM update para evitar loops
+        prevProvisionalWordCountRef.current = words.length
+
+        // Actualizar nodo in-place (nodeView hace DOM-diff: solo añade spans nuevos).
+        // Si no existe todavía, insertarlo al final.
         const updated = editor.commands.updateProvisional(attrs)
         if (!updated) {
             editor.chain().focus('end', { scrollIntoView: false }).setProvisional(attrs).run()
@@ -590,7 +786,9 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 if (el) el.scrollTop = el.scrollHeight
             }))
         }
-    }, [editor, provisionalText, provisionalSpeaker, provisionalWords, segments, getSpeakerInfo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [editor, provisionalText, provisionalSpeaker, provisionalWords, getSpeakerInfo])
+    // ↑ `segments` eliminado intencionalmente de los deps. Ver comentario arriba.
 
     /* ── Smart auto-scroll control ──────────────────── */
 
@@ -620,7 +818,57 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         return () => window.removeEventListener('keydown', handler)
     }, [editor])
 
-    /* ── Render ──────────────────────────────────────── */
+    /* ── Text selection toolbar ─────────────────────── */
+
+    useEffect(() => {
+        if (!editor || !onReasignarSegmentos) return
+
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+        const handleSelectionChange = () => {
+            if (debounceTimer) clearTimeout(debounceTimer)
+            debounceTimer = setTimeout(() => {
+                const sel = window.getSelection()
+                if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+                    setSelectionToolbar(prev => prev.isActive ? { ...prev, isActive: false } : prev)
+                    return
+                }
+                const range = sel.getRangeAt(0)
+                const editorDom = editor.view.dom
+                if (!editorDom.contains(range.commonAncestorContainer)) {
+                    setSelectionToolbar(prev => prev.isActive ? { ...prev, isActive: false } : prev)
+                    return
+                }
+                const ids = new Set<string>()
+                editorDom.querySelectorAll('[data-segment-id]').forEach(el => {
+                    // Only top-level segment spans (not low-confidence inner spans)
+                    if (el.closest('[data-segment-id]') !== el) return
+                    if (range.intersectsNode(el)) {
+                        const sid = el.getAttribute('data-segment-id')
+                        if (sid) ids.add(sid)
+                    }
+                })
+                if (ids.size === 0) {
+                    setSelectionToolbar(prev => prev.isActive ? { ...prev, isActive: false } : prev)
+                    return
+                }
+                const rect = range.getBoundingClientRect()
+                setSelectionToolbar({
+                    isActive: true,
+                    segmentIds: Array.from(ids),
+                    pos: { x: rect.left + rect.width / 2, y: rect.top },
+                })
+            }, 120)
+        }
+
+        document.addEventListener('selectionchange', handleSelectionChange)
+        return () => {
+            document.removeEventListener('selectionchange', handleSelectionChange)
+            if (debounceTimer) clearTimeout(debounceTimer)
+        }
+    }, [editor, onReasignarSegmentos])
+
+    /* ── Imperative handle ──────────────────────────── */
 
     const handleCorrectionSelect = (newWord: string) => {
         if (!editor) return
@@ -693,6 +941,121 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                     onAccept={handleCorrectionAccept}
                     onClose={() => setPopover(prev => ({ ...prev, isOpen: false }))}
                 />
+
+                {/* Speaker Selection Popover */}
+                {speakerPopover.isOpen && onSpeakerCambiado && (
+                    <>
+                        {/* Backdrop */}
+                        <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setSpeakerPopover(prev => ({ ...prev, isOpen: false }))}
+                        />
+                        <div
+                            className="fixed z-50 min-w-[200px] py-1 shadow-xl"
+                            style={{
+                                left: Math.min(speakerPopover.screenPos.x, window.innerWidth - 220),
+                                top: speakerPopover.screenPos.y + 8,
+                                background: 'var(--bg-surface)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: '4px',
+                            }}
+                        >
+                            <p
+                                className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest"
+                                style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}
+                            >
+                                Reasignar hablante
+                            </p>
+                            {hablantes.length === 0 ? (
+                                <p className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                    Sin hablantes registrados
+                                </p>
+                            ) : (
+                                hablantes.map(h => (
+                                    <button
+                                        key={h.speaker_id}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:brightness-110 transition-all"
+                                        style={{
+                                            background: h.speaker_id === speakerPopover.currentSpeakerId
+                                                ? `${h.color}20`
+                                                : 'transparent',
+                                            color: 'var(--text-primary)',
+                                        }}
+                                        onClick={() => {
+                                            setSpeakerPopover(prev => ({ ...prev, isOpen: false }))
+                                            if (h.speaker_id !== speakerPopover.currentSpeakerId) {
+                                                onSpeakerCambiado(speakerPopover.firstSegmentId, h.speaker_id)
+                                            }
+                                        }}
+                                    >
+                                        <span
+                                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                                            style={{ background: h.color }}
+                                        />
+                                        <span className="text-[11px] font-medium">{h.etiqueta}</span>
+                                        {h.nombre && (
+                                            <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                                                {h.nombre}
+                                            </span>
+                                        )}
+                                        {h.speaker_id === speakerPopover.currentSpeakerId && (
+                                            <span className="text-[9px] ml-auto" style={{ color: h.color }}>✓</span>
+                                        )}
+                                    </button>
+                                ))
+                            )}
+                        </div>
+                    </>
+                )}
+
+                {/* Selection toolbar — assign selected segments to a speaker */}
+                {selectionToolbar.isActive && onReasignarSegmentos && hablantes.length > 0 && (
+                    <div
+                        className="fixed z-50 flex items-center gap-0.5 px-2 py-1.5 shadow-xl"
+                        style={{
+                            left: Math.max(8, Math.min(selectionToolbar.pos.x - 120, window.innerWidth - 280)),
+                            top: Math.max(8, selectionToolbar.pos.y - 48),
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '4px',
+                            pointerEvents: 'auto',
+                        }}
+                    >
+                        <span
+                            className="text-[9px] font-bold uppercase tracking-widest pr-1.5 mr-1 shrink-0"
+                            style={{ color: 'var(--text-muted)', borderRight: '1px solid var(--border-subtle)' }}
+                        >
+                            Asignar a
+                        </span>
+                        {hablantes.map(h => (
+                            <button
+                                key={h.speaker_id}
+                                title={h.etiqueta + (h.nombre ? ` — ${h.nombre}` : '')}
+                                className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded hover:brightness-110 transition-all"
+                                style={{ background: `${h.color}18`, color: h.color, border: `1px solid ${h.color}40` }}
+                                onMouseDown={(e) => {
+                                    e.preventDefault() // Keep browser selection alive
+                                    const ids = [...selectionToolbar.segmentIds]
+                                    setSelectionToolbar({ isActive: false, segmentIds: [], pos: { x: 0, y: 0 } })
+                                    window.getSelection()?.removeAllRanges()
+                                    onReasignarSegmentos(ids, h.speaker_id)
+                                }}
+                            >
+                                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: h.color }} />
+                                {h.etiqueta.replace(/:$/, '')}
+                            </button>
+                        ))}
+                        <button
+                            className="ml-1 px-1.5 py-0.5 text-[10px] rounded hover:brightness-110"
+                            style={{ color: 'var(--text-muted)' }}
+                            onMouseDown={(e) => {
+                                e.preventDefault()
+                                setSelectionToolbar({ isActive: false, segmentIds: [], pos: { x: 0, y: 0 } })
+                                window.getSelection()?.removeAllRanges()
+                            }}
+                        >✕</button>
+                    </div>
+                )}
 
                 {/* Scroll indicator — shows when auto-scroll is off */}
                 {!autoScrollRef.current && segments.length > 3 && (

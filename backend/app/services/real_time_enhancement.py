@@ -25,7 +25,7 @@ class RealTimeEnhancementService:
     """
 
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         self.conversation_context: List[Dict[str, str]] = []
         self.max_context_segments = 25  # Mantener últimos 25 segmentos (~3-5 min de contexto)
 
@@ -78,7 +78,7 @@ Responde SOLO con un JSON válido (sin markdown):
   "reason": "breve explicación"
 }}"""
 
-            message = self.client.messages.create(
+            message = await self.client.messages.create(
                 model=settings.ANTHROPIC_MODEL,
                 max_tokens=200,
                 temperature=0.1,
@@ -141,7 +141,7 @@ Responde SOLO con un JSON válido (sin markdown):
             prompt = self._build_enhancement_prompt(text, speaker_id, context_text)
 
             # Llamar a Claude con streaming desactivado para respuesta rápida
-            message = self.client.messages.create(
+            message = await self.client.messages.create(
                 model=settings.ANTHROPIC_MODEL,
                 max_tokens=500,
                 temperature=0.3,  # Baja temperatura para consistencia
@@ -173,17 +173,14 @@ Responde SOLO con un JSON válido (sin markdown):
 
         except Exception as e:
             logger.error(f"Error enhancing segment: {e}")
-            # Fallback: capitalizar primera letra y añadir punto
-            fallback = text.strip()
-            if fallback and not fallback[0].isupper():
-                fallback = fallback[0].upper() + fallback[1:]
-            if fallback and not fallback[-1] in ".?!":
-                fallback += "."
+            # Fallback: usar limpieza rápida
+            from app.services.text_processing import clean_transcript, detect_question
+            fallback = clean_transcript(text)
 
             return {
                 "original": text,
                 "enhanced": fallback,
-                "is_question": False,
+                "is_question": detect_question(fallback),
                 "is_statement": True,
                 "confidence": 0.5,
             }
@@ -196,7 +193,9 @@ Responde SOLO con un JSON válido (sin markdown):
         context_parts = []
         for seg in previous_segments[-self.max_context_segments :]:
             speaker = seg.get("speaker_id", "DESCONOCIDO")
-            text = seg.get("texto_ia", "")
+            # Usar texto_mejorado si existe (tiene puntuación): Claude puede ver si el
+            # segmento anterior terminó en punto y decidir si el actual es continuación.
+            text = seg.get("texto_mejorado") or seg.get("texto_ia", "")
             context_parts.append(f"{speaker}: {text}")
 
         return "\n".join(context_parts)
@@ -207,7 +206,7 @@ Responde SOLO con un JSON válido (sin markdown):
         """Construye el prompt para Claude."""
         return f"""Eres un digitador judicial experto del Distrito Judicial de Cusco, Perú.
 
-Tu tarea es transcribir como lo haría un profesional, mejorando el texto crudo de audio para un ACTA JUDICIAL FORMAL:
+Tu tarea es mejorar el texto crudo de audio para producir texto de ACTA JUDICIAL FORMAL.
 
 CONTEXTO PREVIO:
 {context if context else "Inicio de la audiencia"}
@@ -215,27 +214,29 @@ CONTEXTO PREVIO:
 HABLANTE: {speaker_id}
 TEXTO CRUDO: {text}
 
-REGLA PRINCIPAL (ABSOLUTA — NUNCA VIOLAR):
-⚠️ NUNCA añadir palabras ni completar frases. Solo se permiten tres tipos de corrección:
-1. PUNTUACIÓN: Punto, coma, signos de pregunta (¿?), signos de exclamación (¡!)
-2. MAYÚSCULAS: Primera letra de oración, cargos (Juez, Fiscal, Doctor, Señor, Señora, Señoría), nombres propios
-3. REEMPLAZO 1:1: Si una palabra está mal transcrita, reemplazarla por la forma correcta (1 palabra → 1 palabra). Ejemplo: "presuncion" → "presunción", "acusdo" → "acusado"
+CORRECCIONES PERMITIDAS (las tres únicas):
+1. PUNTUACIÓN: Agregar o corregir punto, coma, punto y coma, dos puntos, signos de pregunta (¿?), signos de exclamación (¡!). Los signos de puntuación NO cuentan como palabras agregadas.
+2. MAYÚSCULAS — regla estricta de continuidad:
+   - Primera letra del texto: SOLO si el CONTEXTO PREVIO termina con punto (.), interrogación (?), exclamación (!), o si el contexto dice "Inicio de la audiencia".
+   - Si el contexto termina con coma, punto y coma, dos puntos, o con cualquier palabra sin puntuación final → el texto es CONTINUACIÓN de oración → primera letra en MINÚSCULA.
+   - Cargos judiciales usados como título directo ("Señoría", "Doctor Pérez", "Fiscal Torres"): capitalizar solo el cargo/título.
+   - Nombres propios de personas cuando sean inequívocamente identificables como nombres propios.
+   - En caso de duda: minúscula.
+3. REEMPLAZO 1:1: Una palabra mal transcrita → su forma correcta (misma palabra, bien escrita). Ejemplo: "presuncion" → "presunción", "acusdo" → "acusado", "señoria" → "Señoría".
 
-PROHIBICIONES (OBLIGATORIAS):
-- NO agregar palabras que no estén en el texto original
-- NO completar oraciones incompletas (dejar como están)
-- NO inventar información ni añadir contexto
+PROHIBICIONES:
+- NO capitalizar la primera palabra por defecto — verificar siempre el contexto previo
+- NO agregar palabras nuevas que no estén en el texto crudo
+- NO completar oraciones ni añadir contexto
 - NO usar puntos suspensivos (...)
-- NO agregar explicaciones ni comentarios
-- NO cambiar el número de palabras del texto original
-- SI hay duda, mantener la palabra original
+- Si hay duda sobre mayúscula/minúscula, usar minúscula
 
-REGLAS ADICIONALES:
-- RESPUESTAS CORTAS: "Sí.", "No.", "Correcto.", "Niego." — mantener breves con punto final
-- Si es pregunta, usar ¿ y ?
-- Capitalizar nombres propios y cargos judiciales
+CASOS ESPECIALES:
+- Si el texto tiene varias oraciones completas seguidas sin puntuación, agregarla donde corresponde
+- Respuestas cortas autónomas: "Sí.", "No.", "Correcto.", "De acuerdo." — poner punto final
+- Preguntas: usar ¿ al inicio y ? al final
 
-DEVUELVE SOLO EL TEXTO MEJORADO:"""
+DEVUELVE SOLO EL TEXTO MEJORADO (sin comillas, sin explicación):"""
 
     def _update_context(self, speaker_id: str, original: str, enhanced: str):
         """Actualiza el contexto de conversación."""

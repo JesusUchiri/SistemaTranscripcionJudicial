@@ -202,6 +202,9 @@ async def editar_segmento(
         segmento.texto_editado = data["texto_editado"]
         segmento.editado_por_usuario = True
 
+    if "speaker_id" in data:
+        segmento.speaker_id = data["speaker_id"]
+
     await db.flush()
     await db.refresh(segmento)
     return segmento
@@ -273,6 +276,73 @@ async def batch_update_segmentos(
     )
 
 
+# ── Merge segmentos ─────────────────────────────────────
+
+@router.post("/{audiencia_id}/segmentos/merge", response_model=SegmentoResponse)
+async def merge_segmentos(
+    audiencia_id: uuid.UUID,
+    data: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[Usuario, Depends(get_current_user)],
+):
+    """
+    Fusiona varios segmentos consecutivos en uno solo.
+    Útil cuando se cambia el hablante de un segmento y coincide con el adyacente.
+    body: { segment_ids: [uuid, uuid, ...] }
+    """
+    segment_ids = data.get("segment_ids", [])
+    if len(segment_ids) < 2:
+        raise HTTPException(status_code=400, detail="Se necesitan al menos 2 segmentos para fusionar")
+
+    result = await db.execute(
+        select(Segmento)
+        .where(
+            Segmento.audiencia_id == audiencia_id,
+            Segmento.id.in_([uuid.UUID(str(sid)) for sid in segment_ids]),
+        )
+        .order_by(Segmento.orden)
+    )
+    segs = result.scalars().all()
+    if len(segs) < 2:
+        raise HTTPException(status_code=404, detail="Segmentos no encontrados")
+
+    # Merge: keep the first, accumulate the rest
+    first = segs[0]
+    rest = segs[1:]
+
+    # Combine texts
+    textos_ia = [first.texto_ia]
+    textos_mejorados = [first.texto_mejorado] if first.texto_mejorado else []
+    textos_editados = [first.texto_editado] if first.texto_editado else []
+    palabras = list(first.palabras_json or [])
+
+    for seg in rest:
+        textos_ia.append(seg.texto_ia)
+        if seg.texto_mejorado:
+            textos_mejorados.append(seg.texto_mejorado)
+        if seg.texto_editado:
+            textos_editados.append(seg.texto_editado)
+        palabras.extend(seg.palabras_json or [])
+
+    first.texto_ia = " ".join(textos_ia)
+    if textos_mejorados:
+        first.texto_mejorado = " ".join(textos_mejorados)
+    if textos_editados:
+        first.texto_editado = " ".join(textos_editados)
+        first.editado_por_usuario = True
+    first.timestamp_fin = segs[-1].timestamp_fin
+    first.palabras_json = palabras if palabras else None
+    first.es_provisional = False
+
+    # Delete the rest
+    for seg in rest:
+        await db.delete(seg)
+
+    await db.commit()
+    await db.refresh(first)
+    return first
+
+
 # ── Audio de la audiencia ────────────────────────────────
 
 @router.get("/{audiencia_id}/audio")
@@ -297,7 +367,7 @@ async def obtener_audio(
     if not audiencia.audio_path or not os.path.exists(audiencia.audio_path):
         raise HTTPException(status_code=404, detail="Audio no disponible")
 
-    # WAV con solo cabecera (44 bytes) o vacío no se puede decodificar en el navegador
+    # WAV/WebM con solo cabecera vacío no se puede decodificar en el navegador
     size = os.path.getsize(audiencia.audio_path)
     if size <= 44:
         raise HTTPException(
@@ -305,8 +375,12 @@ async def obtener_audio(
             detail="Audio no disponible (grabación vacía o sin datos)",
         )
 
+    # Determinar tipo de media según extensión
+    ext = os.path.splitext(audiencia.audio_path)[1].lower()
+    media_type = "audio/webm" if ext == ".webm" else "audio/wav"
+
     return FileResponse(
         audiencia.audio_path,
-        media_type="audio/wav",
-        filename=f"{audiencia.expediente}.wav",
+        media_type=media_type,
+        filename=f"{audiencia.expediente}{ext}",
     )

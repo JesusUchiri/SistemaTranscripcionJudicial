@@ -47,6 +47,10 @@ const SpeakerNode = Node.create<SpeakerNodeOptions>({
                 default: '#2563EB',
                 parseHTML: element => element.getAttribute('color'),
             },
+            firstSegmentId: {
+                default: null,
+                parseHTML: element => element.getAttribute('data-first-segment-id'),
+            },
         }
     },
 
@@ -59,12 +63,13 @@ const SpeakerNode = Node.create<SpeakerNodeOptions>({
     },
 
     renderHTML({ HTMLAttributes }) {
-        const { speakerId, label, color } = HTMLAttributes
+        const { speakerId, label, color, firstSegmentId } = HTMLAttributes
         return [
             'speaker-label',
             mergeAttributes(this.options.HTMLAttributes, {
                 class: 'speaker-label',
                 'data-speaker-id': speakerId,
+                'data-first-segment-id': firstSegmentId,
                 label: label,
                 color: color,
                 style: `
@@ -81,7 +86,7 @@ const SpeakerNode = Node.create<SpeakerNodeOptions>({
                     background: ${color}12;
                     border-left: 3px solid ${color};
                     user-select: none;
-                    cursor: default;
+                    cursor: pointer;
                     width: fit-content;
                 `,
             }),

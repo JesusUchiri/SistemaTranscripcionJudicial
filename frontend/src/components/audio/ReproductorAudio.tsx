@@ -101,6 +101,11 @@ const ReproductorAudio = forwardRef<ReproductorAudioHandle, ReproductorAudioProp
 
             const WaveSurfer = (await import('wavesurfer.js')).default
 
+            // Usar HTMLAudioElement como backend para evitar decodeAudioData (EncodingError en WAV
+            // con header incorrecto mientras el archivo aún se está escribiendo).
+            const audioEl = document.createElement('audio')
+            audioEl.preload = 'auto'
+
             ws = WaveSurfer.create({
                 container: contenedorRef.current!,
                 waveColor: 'rgba(37, 99, 235, 0.25)',
@@ -110,8 +115,7 @@ const ReproductorAudio = forwardRef<ReproductorAudioHandle, ReproductorAudioProp
                 barGap: 1,
                 barRadius: 2,
                 height: 56,
-                normalize: true,
-                backend: 'WebAudio',
+                media: audioEl,
             })
 
             ws.on('ready', () => {

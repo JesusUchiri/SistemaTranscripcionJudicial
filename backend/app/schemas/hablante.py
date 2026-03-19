@@ -9,9 +9,9 @@ class HablanteCreate(BaseModel):
     """Datos para crear un hablante."""
     speaker_id: str
     rol: str = "otro"
-    etiqueta: str = "OTRO:"
+    etiqueta: str | None = None  # Si None, se genera automáticamente desde speaker_id
     nombre: str | None = None
-    color: str = "#94A3B8"
+    color: str | None = None    # Si None, se asigna por orden/rol
     orden: int = 0
 
 

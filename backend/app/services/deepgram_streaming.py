@@ -51,15 +51,17 @@ class DeepgramStreamingService:
         try:
             self._connection_ctx = self._client.listen.v1.connect(
                 model=settings.DEEPGRAM_MODEL,
-                language="es",
+                language="es-419",
                 encoding="linear16",
-                sample_rate="16000",
-                channels="1",
+                sample_rate=16000,
+                channels=1,
                 interim_results="true",
                 punctuate="true",
                 diarize="true",
                 smart_format="true",
-                endpointing="300",
+                endpointing="500",
+                utterance_end_ms="1000",
+                vad_events="true",
                 numerals="true",
             )
             self._connection = await self._connection_ctx.__aenter__()

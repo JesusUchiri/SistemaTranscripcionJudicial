@@ -306,6 +306,17 @@ body {
   display: inline;
 }
 
+/* Speaker label shown in provisional when a new speaker starts talking before their segment
+   is confirmed — appears before the provisional words with the speaker's color. */
+.provisional-speaker-label {
+  font-weight: 600;
+  font-size: 0.8em;
+  letter-spacing: 0.02em;
+  margin-right: 0.35em;
+  vertical-align: baseline;
+  animation: fadeInWord 0.18s ease-out both;
+}
+
 /* Confidence-based highlighting */
 .text-low-confidence {
   background: rgba(255, 243, 205, 0.5);
