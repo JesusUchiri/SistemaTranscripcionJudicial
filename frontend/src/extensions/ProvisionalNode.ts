@@ -115,13 +115,22 @@ const ProvisionalNode = Node.create<ProvisionalNodeOptions>({
                 }
 
                 // 4. Añadir nuevos spans (solo los que no existen aún)
+                // Usamos stagger (60ms/palabra) cuando llegan varias palabras a la vez,
+                // creando efecto palabra-por-palabra aunque Deepgram las envíe en lote.
+                const firstNewIdx = Math.max(wordSpans.length, prevCount)
                 for (let i = wordSpans.length; i < words.length; i++) {
                     // Espacio antes de cada palabra (excepto la primera)
                     if (i > 0) {
                         dom.appendChild(document.createTextNode(' '))
                     }
                     const span = document.createElement('span')
-                    span.className = i < prevCount ? 'provisional-word--stable' : 'provisional-word'
+                    const isNew = i >= prevCount
+                    span.className = isNew ? 'provisional-word' : 'provisional-word--stable'
+                    if (isNew) {
+                        // Cada palabra nueva aparece 60ms después de la anterior
+                        const staggerIdx = i - firstNewIdx
+                        if (staggerIdx > 0) span.style.animationDelay = `${staggerIdx * 60}ms`
+                    }
                     span.textContent = words[i]
                     dom.appendChild(span)
                     wordSpans.push(span)

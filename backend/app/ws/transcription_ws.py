@@ -26,7 +26,7 @@ from app.models.usuario import Usuario
 from app.services.auth_service import decode_token, get_user_by_id
 from app.services.deepgram_streaming import DeepgramStreamingService
 from app.services.real_time_enhancement import get_enhancement_service
-from app.services.text_processing import detect_question, clean_transcript
+from app.services.text_processing import detect_question, clean_transcript, preprocess_raw_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,8 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
     audio_file.setframerate(16000)
 
     segment_counter = 0
+    session_state = {"claude_total": 0.0}
+    pending_tasks = set()
     enhancement_service = get_enhancement_service()
     previous_segments = []  # Contexto para mejoramiento
     
@@ -197,8 +199,8 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         
         logger.info(f"[DIAG] Sending _send_intermediate_segment: {len(words)} words, id={segment_id}")
         
-        # Aplicar limpieza rápida (capitalización, puntos, roles legales)
-        text = clean_transcript(text)
+        # Preprocesar artefactos de ASR (repeticiones dobles/triples) y luego limpiar
+        text = clean_transcript(preprocess_raw_transcript(text))
         
         result_to_send = {
             "type": "transcript",
@@ -243,37 +245,69 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
     async def _process_consolidated_segment(buffer_data: dict, current_segment_counter: int):
         """Procesa el buffer de consolidación como un único segmento mejorado sin bloquear."""
         nonlocal previous_segments
-        
+
         if not buffer_data["segments"]:
             return
-        
-        # Texto completo consolidado
-        consolidated_text = " ".join(buffer_data["segments"])
+
+        # Texto completo consolidado — preprocesar para eliminar artefactos de ASR
+        # antes de enviarlo a Claude (repeticiones, alucinaciones tipo "Port Port Port")
+        consolidated_text = preprocess_raw_transcript(" ".join(buffer_data["segments"]))
         speaker_id = buffer_data["speaker_id"]
         start_time = buffer_data["timestamps"][0]["start"]
         end_time = buffer_data["timestamps"][-1]["end"]
         all_words = buffer_data["words"]
         intermediate_ids = buffer_data["intermediate_ids"]
-        
+
         # Calcular confianza promedio
         avg_confidence = sum(w.get("confidence", 1.0) for w in all_words) / len(all_words) if all_words else 1.0
-        
+
+        # Notificar al frontend que Claude está mejorando estos segmentos
+        try:
+            await websocket.send_json({
+                "type": "enhancing",
+                "segment_ids": intermediate_ids,
+            })
+        except Exception:
+            pass
+
         # Mejorar con Claude
         try:
+            logger.info(f"🧠 [CLAUDE] Llamando enhance_segment con {len(consolidated_text)} chars...")
             enhancement = await enhancement_service.enhance_segment(
                 text=consolidated_text,
                 speaker_id=speaker_id,
                 previous_segments=previous_segments,
+                audiencia_id=audiencia_id,
             )
+            logger.info(f"🧠 [CLAUDE] enhance_segment retornó: keys={list(enhancement.keys())}")
             
             texto_mejorado = enhancement["enhanced"]
             enhancement_confidence = enhancement["confidence"]
             is_question = enhancement["is_question"]
+            usd_cost = enhancement.get("usd_cost", 0.0)
             
-            logger.info(f"Enhanced: '{consolidated_text[:50]}...' → '{texto_mejorado[:50]}...'")
+            logger.info(f"💰 [COSTO] usd_cost={usd_cost}, session_total_antes={session_state['claude_total']}")
+            
+            if usd_cost > 0.0:
+                session_state["claude_total"] += usd_cost
+                logger.info(f"💰 [COSTO] session_total_despues={session_state['claude_total']}")
+                try:
+                    cost_msg = {
+                        "type": "cost_update",
+                        "claude_usd": session_state["claude_total"]
+                    }
+                    logger.info(f"💰 [COSTO] Enviando al WS: {cost_msg}")
+                    await websocket.send_json(cost_msg)
+                    logger.info(f"💰 [COSTO] ✅ cost_update enviado exitosamente: ${session_state['claude_total']:.5f}")
+                except Exception as ws_err:
+                    logger.error(f"💰 [COSTO] ❌ Failed to send cost_update: {ws_err}")
+            else:
+                logger.warning(f"💰 [COSTO] ⚠️ usd_cost es 0.0 — Claude no reportó tokens?")
+
+            logger.info(f"Enhanced [(+${usd_cost:.5f})]: '{consolidated_text[:50]}...' → '{texto_mejorado[:50]}...'")
             
         except Exception as enhance_err:
-            logger.warning(f"Enhancement failed, using original: {enhance_err}")
+            logger.error(f"🧠 [CLAUDE] ❌ Enhancement failed: {enhance_err}", exc_info=True)
             texto_mejorado = clean_transcript(consolidated_text)
             enhancement_confidence = 0.0
             is_question = False
@@ -288,8 +322,10 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         if len(previous_segments) > 25:
             previous_segments.pop(0)
 
-        # Usar el ID original del primer segmento intermedio para no romper el DOM del frontend
-        segment_id = intermediate_ids[0] if intermediate_ids else uuid.uuid4()
+        # Siempre usar un UUID nuevo: el frontend detecta addedIds=[new_id] != oldIds
+        # y activa el reemplazo localizado (con animación word-diff de Claude).
+        # Reutilizar intermediate_ids[0] dejaba addedIds=[] → re-render completo.
+        segment_id = uuid.uuid4()
 
         result_to_send = {
             "type": "transcript",
@@ -331,22 +367,9 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         except Exception as dict_err:
             logger.debug(f"Dictionary check skipped: {dict_err}")
 
-        # Eliminar segmentos intermedios de la DB y guardar el definitivo
+        # ── Paso 1: Guardar el segmento definitivo (nunca debe fallar) ──
         try:
             async with async_session() as db:
-                # Eliminar intermedios
-                for iid in intermediate_ids:
-                    try:
-                        result = await db.execute(
-                            select(Segmento).where(Segmento.id == uuid.UUID(iid))
-                        )
-                        seg = result.scalar_one_or_none()
-                        if seg:
-                            await db.delete(seg)
-                    except Exception:
-                        pass
-                
-                # Guardar segmento definitivo
                 segmento = Segmento(
                     id=segment_id,
                     audiencia_id=uuid.UUID(audiencia_id),
@@ -363,8 +386,26 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
                 )
                 db.add(segmento)
                 await db.commit()
+                logger.info(f"✅ Segmento definitivo guardado: {segment_id} (texto_mejorado={'SÍ' if texto_mejorado else 'NO'})")
         except Exception as db_err:
-            logger.debug(f"Segment not persisted (demo mode?): {db_err}")
+            logger.error(f"❌ Error CRÍTICO guardando segmento definitivo {segment_id}: {db_err}", exc_info=True)
+
+        # ── Paso 2: Eliminar segmentos intermedios (best-effort) ──
+        try:
+            async with async_session() as db:
+                for iid in intermediate_ids:
+                    try:
+                        result = await db.execute(
+                            select(Segmento).where(Segmento.id == uuid.UUID(iid))
+                        )
+                        seg = result.scalar_one_or_none()
+                        if seg:
+                            await db.delete(seg)
+                    except Exception:
+                        pass
+                await db.commit()
+        except Exception as cleanup_err:
+            logger.warning(f"⚠️ Error limpiando segmentos intermedios (no crítico): {cleanup_err}")
 
     def _trigger_consolidation():
         nonlocal segment_counter, consolidation_buffer
@@ -391,37 +432,38 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         consolidation_buffer["last_check_length"] = 0
         consolidation_buffer["intermediate_ids"] = []
         
-        # Lanzar tarea en background para no bloquear websocket de Deepgram
-        asyncio.create_task(_process_consolidated_segment(buffer_copy, current_counter))
+        # Lanzar tarea en background y guardar referencia viva para esperarla al final de la sesion
+        task = asyncio.create_task(_process_consolidated_segment(buffer_copy, current_counter))
+        pending_tasks.add(task)
+        task.add_done_callback(pending_tasks.discard)
 
     async def on_transcript(result: dict):
         """Callback invoked for each Deepgram transcript result."""
         nonlocal segment_counter, consolidation_buffer
-        
+
         try:
             current_speaker = result["speaker"]
             is_final = result.get("is_final", False)
-            
+
             # Enviar resultados provisionales de Deepgram (interim) al frontend
             if not is_final:
-                logger.info(f"[DIAG] Sending interim to frontend: {len(result.get('words', []))} words")
+                logger.debug(f"[DIAG] Sending interim to frontend: {len(result.get('words', []))} words")
                 await websocket.send_json(result)
                 return
-            
+
             # ── Resultado final de Deepgram ──
-            # Cambio de speaker → procesar buffer anterior
+            # Cambio de speaker → consolidar buffer del speaker anterior con Claude
             if consolidation_buffer["speaker_id"] is not None and consolidation_buffer["speaker_id"] != current_speaker:
                 if consolidation_buffer["segments"]:
-                    logger.info(f"Speaker changed: {consolidation_buffer['speaker_id']} → {current_speaker}, processing buffer")
+                    logger.info(f"Speaker changed: {consolidation_buffer['speaker_id']} → {current_speaker}, triggering consolidation")
                     _trigger_consolidation()
-                
                 consolidation_buffer["speaker_id"] = current_speaker
-            
+
             # Si es el primer segmento, establecer speaker
             if consolidation_buffer["speaker_id"] is None:
                 consolidation_buffer["speaker_id"] = current_speaker
-            
-            # Agregar segmento actual al buffer
+
+            # Agregar segmento actual al buffer para consolidación con Claude
             consolidation_buffer["segments"].append(result["text"])
             consolidation_buffer["timestamps"].append({
                 "start": result["start"],
@@ -430,53 +472,43 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
             current_words = result.get("words", [])
             if current_words:
                 consolidation_buffer["words"].extend(current_words)
-            
-            # ── Enviar segmento intermedio visible INMEDIATAMENTE ──
-            buffer_text = " ".join(consolidation_buffer["segments"])
 
+            # ── Enviar INMEDIATAMENTE como segmento intermedio visible ──
+            # El usuario ve texto sólido sin esperar a que la frase "parezca completa".
+            # El texto provisional (gris) se elimina y reemplaza instantáneamente.
             await _send_intermediate_segment(
-                text=buffer_text,
+                text=result["text"],
                 speaker_id=current_speaker,
-                start=consolidation_buffer["timestamps"][0]["start"] if consolidation_buffer["timestamps"] else result["start"],
+                start=result["start"],
                 end=result["end"],
-                words=consolidation_buffer["words"],
+                words=current_words,
             )
 
-            # Decidir si consolidar con Claude
+            # ── Decidir si Claude debe consolidar ahora ──
+            # La consolidación principal ocurre en on_utterance_end (1000ms silencio).
+            # Aquí solo disparamos en casos límite para no acumular infinito.
+            buffer_text = " ".join(consolidation_buffer["segments"])
             word_count = len(buffer_text.split())
-            looks_incomplete = _is_incomplete_by_pattern(buffer_text)
-            should_process = False
-            reason = ""
-
-            # 1. Límite de seguridad: más de 50 palabras → procesar ya
+            # 1. Límite duro: > 50 palabras sin pausa detectada → consolidar ya
             if word_count > 50:
-                should_process = True
-                reason = f"límite de palabras ({word_count})"
-            # 2. Frase parece completa por patrones
-            elif not looks_incomplete:
-                should_process = True
-                reason = "frase parece completa (no termina en conector)"
-            # 3. Evitar llamar a Claude en medio del buffer para no bloquear
-            elif looks_incomplete and word_count > 30:
-                should_process = True
-                reason = "límite de seguridad (30) para enviar"
-
-            if should_process:
-                logger.info(f"Processing buffer ({word_count} palabras): {reason}")
+                logger.info(f"Triggering consolidation ({word_count} palabras): límite 50")
+                _trigger_consolidation()
+            # 2. El fragmento tiene puntuación final → oración completa segura
+            elif result["text"].strip() and result["text"].strip()[-1] in '.?!':
+                logger.info(f"Triggering consolidation: puntuación final detectada")
                 _trigger_consolidation()
 
         except Exception as e:
             logger.error(f"Error processing transcript: {e}", exc_info=True)
 
     async def on_utterance_end(data: dict):
-        """Deepgram signals natural end of utterance — flush buffer immediately.
+        """Deepgram signals natural end of utterance — trigger consolidation immediately.
         This gives the best segment boundaries since Deepgram's VAD detected silence.
         """
         try:
-            # Flush the consolidation buffer — natural speech boundary
             if consolidation_buffer["segments"]:
-                logger.info("UtteranceEnd: flushing buffer (natural speech boundary)")
-                await _process_consolidated_segment()
+                logger.info("UtteranceEnd: triggering consolidation (natural speech boundary)")
+                _trigger_consolidation()
 
             await websocket.send_json({
                 "type": "utterance_end",
@@ -580,20 +612,30 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
 
             elif msg_type == "stop":
                 logger.info(f"Transcription stopped for audiencia: {audiencia_id}")
-                # Procesar cualquier buffer pendiente antes de cerrar
+                # Consolidar buffer pendiente antes de cerrar
                 if consolidation_buffer["segments"]:
-                    logger.info("Processing remaining buffer before stop...")
-                    await _process_consolidated_segment(consolidation_buffer.copy(), segment_counter)
+                    logger.info("Triggering final consolidation before stop...")
+                    _trigger_consolidation()
+                
+                # Esperar a que TODAS las peticiones de Inteligencia Artificial de Claude
+                # terminen de devolver el texto definitivo y el CÁLCULO DE COSTOS FINAL ANTES de
+                # permitir a FastAPI DESTRUIR físicamente la conexión del Websocket al Front.
+                if pending_tasks:
+                    logger.info(f"Esperando {len(pending_tasks)} tareas de IA antes de cerrar websocket...")
+                    await asyncio.gather(*pending_tasks, return_exceptions=True)
                 break
 
     except WebSocketDisconnect as e:
         logger.info(f"WebSocket disconnected for audiencia: {audiencia_id} (code={getattr(e, 'code', '?')})")
-        # Procesar buffer pendiente al desconectar
         if consolidation_buffer["segments"]:
             try:
-                await _process_consolidated_segment(consolidation_buffer.copy(), segment_counter)
+                _trigger_consolidation()
             except Exception:
                 pass
+        if pending_tasks:
+            # Aunque se desconectó, no cerremos el bucle asíncrono the Python subyacente para no fallar el costo
+            # y poder grabar al menos a la Base de Datos.
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
     except Exception as e:
         logger.error(f"WebSocket error for audiencia {audiencia_id}: {e}", exc_info=True)
         try:
@@ -608,6 +650,16 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         await dg_service.close()
         audio_file.close()
 
+        # Helper para la duración
+        duracion_segundos = 0.0
+        try:
+            if os.path.exists(audio_path):
+                # Calcular duración de un WAV de 16000Hz 16-bit Mono (32000 bytes/s)
+                file_size = os.path.getsize(audio_path)
+                duracion_segundos = max(0.0, (file_size - 44) / 32000)
+        except Exception:
+            pass
+
         # Guardar sesión: audio_path y estado "transcrita"
         try:
             aid = uuid.UUID(audiencia_id)
@@ -620,8 +672,27 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
                     if os.path.exists(audio_path):
                         audiencia.audio_path = audio_path
                     audiencia.estado = "transcrita"
+                    audiencia.audio_duration_seconds = duracion_segundos
                     await db.commit()
                     logger.info(f"Sesión guardada: audiencia {audiencia_id} → transcrita (audio: {audio_path})")
+
+                # Registrar costo Deepgram Streaming
+                if duracion_segundos > 0:
+                    try:
+                        from app.services.cost_tracker import registrar_uso_deepgram
+                        await registrar_uso_deepgram(
+                            db=db,
+                            servicio="deepgram_streaming",
+                            modelo=settings.DEEPGRAM_MODEL,
+                            duracion_segundos=duracion_segundos,
+                            modo="streaming",
+                            diarize=True,
+                            audiencia_id=aid,
+                            usuario_id=audiencia.created_by if audiencia else None,
+                        )
+                    except Exception as metric_err:
+                        logger.error(f"Error registrando costo streaming: {metric_err}")
+
         except (ValueError, Exception) as e:
             logger.warning(f"No se pudo actualizar audiencia al cerrar sesión: {e}")
 

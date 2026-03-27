@@ -125,7 +125,7 @@ class DeepgramStreamingService:
             await self._handle_results(data)
         elif msg_type == "UtteranceEnd":
             if self.on_utterance_end:
-                await self.on_utterance_end({"type": "UtteranceEnd"})
+                await self.on_utterance_end(data)
         elif msg_type == "SpeechStarted":
             if self.on_speech_started:
                 await self.on_speech_started({"type": "SpeechStarted"})

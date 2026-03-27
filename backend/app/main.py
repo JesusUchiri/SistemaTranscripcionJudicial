@@ -27,6 +27,10 @@ from app.ws.transcription_ws import transcription_websocket
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(r"C:\tmp\judiscribe_backend.log", mode="w", encoding="utf-8"),
+    ],
 )
 # Silenciar loggers muy verbosos
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
@@ -172,6 +176,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"✅ DEEPGRAM_API_KEY configured (length: {len(settings.DEEPGRAM_API_KEY)} chars)")
     logger.info(f"   DEEPGRAM_MODEL: {settings.DEEPGRAM_MODEL}")
+    logger.info(f"   ANTHROPIC_MODEL: {settings.ANTHROPIC_MODEL}")
 
     # Seed automático de la base de datos
     await auto_seed_database()
@@ -281,8 +286,11 @@ app.websocket("/ws/transcripcion/{audiencia_id}")(transcription_websocket)
 # ── Health check ─────────────────────────────────────────
 @app.get("/api/health")
 async def health_check():
+    """Retorna el estado del servicio y los modelos configurados."""
     return {
         "status": "ok",
         "service": "judiscribe-backend",
         "version": "0.1.0",
+        "anthropic_model": settings.ANTHROPIC_MODEL,
+        "deepgram_model": settings.DEEPGRAM_MODEL,
     }

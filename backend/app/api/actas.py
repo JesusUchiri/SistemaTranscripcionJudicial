@@ -9,6 +9,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -192,7 +193,7 @@ async def exportar_acta(
 
     result = await db.execute(
         select(Acta)
-        .join(Audiencia)
+        .options(selectinload(Acta.audiencia))
         .where(
             Acta.id == acta_id,
             Acta.audiencia_id == audiencia_id,

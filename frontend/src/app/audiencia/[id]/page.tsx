@@ -387,42 +387,60 @@ export default function PaginaTranscripcion() {
     // Reasignar segmentos seleccionados a un nuevo speaker (desde selection toolbar)
     const handleReasignarSegmentos = useCallback(async (segmentIds: string[], newSpeakerId: string) => {
         const store = useCanvasStore.getState()
-        // Optimistic update
+
+        // Optimistic update: mark ALL selected segments as newSpeakerId
         store.updateSegmentsSpeaker(segmentIds, newSpeakerId)
-        // Persist to backend
-        try {
-            await Promise.all(
-                segmentIds.map(id =>
-                    api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { speaker_id: newSpeakerId })
+
+        // Persist to backend (skip segments already that speaker)
+        const segsBeforeUpdate = store.segments
+        const changed = segmentIds.filter(id => {
+            const seg = segsBeforeUpdate.find(s => s.id === id)
+            return seg && seg.speaker_id !== newSpeakerId
+        })
+        if (changed.length > 0) {
+            try {
+                await Promise.all(
+                    changed.map(id =>
+                        api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { speaker_id: newSpeakerId })
+                    )
                 )
-            )
-        } catch (err) {
-            console.error('Error reasignando segmentos:', err)
-            return
+            } catch (err) {
+                console.error('Error reasignando segmentos:', err)
+                return
+            }
         }
-        // Detect and merge adjacent same-speaker groups
+
+        // Build one contiguous merge block:
+        //   start = earliest selected segment index
+        //   expand left while same speaker
+        //   expand right while same speaker
+        //   this handles: pure merge (same speaker, just fuse) + reassign+merge
         const segs = useCanvasStore.getState().segments
-        // For each changed segment, check neighbors
-        const allToMerge = new Set<string>()
-        for (const segId of segmentIds) {
-            const idx = segs.findIndex(s => s.id === segId)
-            if (idx === -1) continue
-            // Collect contiguous block around this segment with same speaker
-            const block: string[] = [segId]
-            for (let i = idx - 1; i >= 0 && segs[i].speaker_id === newSpeakerId; i--)
-                block.unshift(segs[i].id)
-            for (let i = idx + 1; i < segs.length && segs[i].speaker_id === newSpeakerId; i++)
-                block.push(segs[i].id)
-            if (block.length > 1) block.forEach(id => allToMerge.add(id))
-        }
-        const mergeList = Array.from(allToMerge)
-        if (mergeList.length > 1) {
+        const selSet = new Set(segmentIds)
+
+        // Find the contiguous range that now shares newSpeakerId around the selected block
+        const idxFirst = segs.findIndex(s => selSet.has(s.id))
+        const idxLast  = segs.reduce((acc, s, i) => selSet.has(s.id) ? i : acc, -1)
+        if (idxFirst === -1) return
+
+        const mergeBlock: string[] = []
+        // Expand left from first selected
+        for (let i = idxFirst - 1; i >= 0 && segs[i].speaker_id === newSpeakerId; i--)
+            mergeBlock.unshift(segs[i].id)
+        // Add the core range (all segments between first and last selected, inclusive)
+        for (let i = idxFirst; i <= idxLast; i++)
+            mergeBlock.push(segs[i].id)
+        // Expand right from last selected
+        for (let i = idxLast + 1; i < segs.length && segs[i].speaker_id === newSpeakerId; i++)
+            mergeBlock.push(segs[i].id)
+
+        if (mergeBlock.length > 1) {
             try {
                 const { data: merged } = await api.post<Segmento>(
                     `/api/audiencias/${audienciaId}/segmentos/merge`,
-                    { segment_ids: mergeList }
+                    { segment_ids: mergeBlock }
                 )
-                store.replaceSegments(mergeList, merged)
+                store.replaceSegments(mergeBlock, merged)
             } catch (err) {
                 console.error('Error fusionando segmentos:', err)
             }
@@ -497,8 +515,19 @@ export default function PaginaTranscripcion() {
                         <h1 className="text-xs sm:text-sm font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                             {audiencia.expediente}
                         </h1>
-                        <p className="text-[10px] sm:text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                            {audiencia.tipo_audiencia} <span className="hidden sm:inline">— {audiencia.juzgado}</span>
+                        <p className="text-[10px] sm:text-xs truncate flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                            <span>{audiencia.tipo_audiencia}</span>
+                            <span className="hidden sm:inline">— {audiencia.juzgado}</span>
+                            {((audiencia.costo_deepgram_usd || 0) + (audiencia.costo_claude_usd || 0)) > 0 && (
+                                <>
+                                    <span>·</span>
+                                    <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-black/10">
+                                        Costo API: ${(
+                                            (audiencia.costo_deepgram_usd || 0) + (audiencia.costo_claude_usd || 0)
+                                        ).toFixed(4)}
+                                    </span>
+                                </>
+                            )}
                         </p>
                     </div>
                 </div>

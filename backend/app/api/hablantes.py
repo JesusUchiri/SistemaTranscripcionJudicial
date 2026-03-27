@@ -302,6 +302,18 @@ Responde SOLO con un JSON válido (sin markdown):
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
         sugerencias = json.loads(raw)
+        
+        # Registrar costo
+        from app.services.cost_tracker import registrar_uso_claude
+        await registrar_uso_claude(
+            db=db,
+            servicio="claude_inferir_roles",
+            modelo=settings.ANTHROPIC_MODEL,
+            input_tokens=message.usage.input_tokens,
+            output_tokens=message.usage.output_tokens,
+            audiencia_id=audiencia_id,
+        )
+
     except Exception as e:
         _log.error(f"[inferir-roles] Claude error: {e}")
         raise HTTPException(status_code=500, detail=f"Error al inferir roles: {e}")

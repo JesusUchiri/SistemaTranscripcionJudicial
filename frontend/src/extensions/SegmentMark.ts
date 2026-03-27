@@ -39,12 +39,16 @@ const SegmentMark = Mark.create<SegmentMarkOptions>({
         return {
             segmentId: {
                 default: null,
+                // Sin parseHTML por defecto TipTap busca 'segmentid' — necesitamos 'data-segment-id'
+                parseHTML: element => element.getAttribute('data-segment-id'),
             },
             timestamp: {
                 default: 0,
+                parseHTML: element => parseFloat(element.getAttribute('data-timestamp') || '0'),
             },
             editedByUser: {
                 default: false,
+                parseHTML: element => element.getAttribute('data-edited') === 'true',
             },
         }
     },
@@ -91,7 +95,11 @@ const SegmentMark = Mark.create<SegmentMarkOptions>({
                         if (node.isText) {
                             const marks = node.marks
                             marks.forEach((mark) => {
-                                if (mark.type.name === this.name && mark.attrs.segmentId === segmentId) {
+                                if (
+                                    mark.type.name === this.name &&
+                                    mark.attrs.segmentId === segmentId &&
+                                    mark.attrs.editedByUser !== true
+                                ) {
                                     const newMark = mark.type.create({
                                         ...mark.attrs,
                                         editedByUser: true,

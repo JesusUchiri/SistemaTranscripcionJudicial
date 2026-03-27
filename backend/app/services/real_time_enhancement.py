@@ -34,6 +34,7 @@ class RealTimeEnhancementService:
         text: str,
         speaker_id: str,
         previous_segments: Optional[List[Dict[str, str]]] = None,
+        audiencia_id: Optional[str] = None,
     ) -> Dict[str, any]:
         """
         Determina si un segmento de texto es una frase completa o necesita continuar.
@@ -94,6 +95,21 @@ Responde SOLO con un JSON válido (sin markdown):
             
             result = json.loads(response_text)
             
+            # Registrar costo
+            try:
+                import uuid as _uuid
+                from app.services.cost_tracker import registrar_uso_claude
+                await registrar_uso_claude(
+                    db=None,
+                    servicio="claude_sentence_completion",
+                    modelo=settings.ANTHROPIC_MODEL,
+                    input_tokens=message.usage.input_tokens,
+                    output_tokens=message.usage.output_tokens,
+                    audiencia_id=_uuid.UUID(audiencia_id) if audiencia_id else None,
+                )
+            except Exception as metric_err:
+                logger.error(f"Error registrando costo: {metric_err}")
+
             logger.info(f"Sentence completion check: {result['is_complete']} - {result['reason']}")
             return result
 
@@ -116,6 +132,7 @@ Responde SOLO con un JSON válido (sin markdown):
         text: str,
         speaker_id: str,
         previous_segments: Optional[List[Dict[str, str]]] = None,
+        audiencia_id: Optional[str] = None,
     ) -> Dict[str, str]:
         """
         Mejora un segmento de transcripción con contexto.
@@ -141,6 +158,7 @@ Responde SOLO con un JSON válido (sin markdown):
             prompt = self._build_enhancement_prompt(text, speaker_id, context_text)
 
             # Llamar a Claude con streaming desactivado para respuesta rápida
+            logger.info(f"🧠 [ENHANCE] Modelo: {settings.ANTHROPIC_MODEL}, prompt len: {len(prompt)} chars")
             message = await self.client.messages.create(
                 model=settings.ANTHROPIC_MODEL,
                 max_tokens=500,
@@ -155,6 +173,7 @@ Responde SOLO con un JSON válido (sin markdown):
 
             # Extraer respuesta
             enhanced_text = message.content[0].text.strip()
+            logger.info(f"🧠 [ENHANCE] Respuesta OK: in={message.usage.input_tokens} out={message.usage.output_tokens} tokens")
 
             # Analizar tipo de segmento con detección centralizada
             is_question = detect_question(enhanced_text)
@@ -163,18 +182,47 @@ Responde SOLO con un JSON válido (sin markdown):
             # Actualizar contexto de conversación
             self._update_context(speaker_id, text, enhanced_text)
 
+            # Calcular costo independientemente de la base de datos (para no fallar UI)
+            from app.services.cost_tracker import calcular_costo_claude, registrar_uso_claude
+            usd_cost = calcular_costo_claude(message.usage.input_tokens, message.usage.output_tokens, settings.ANTHROPIC_MODEL)
+            logger.info(f"💰 [ENHANCE] Costo calculado: ${usd_cost:.6f} (model={settings.ANTHROPIC_MODEL})")
+            
+            # Convertir audiencia_id a UUID antes de pasar al registrador
+            parsed_audiencia_id = None
+            if audiencia_id:
+                try:
+                    import uuid as _uuid
+                    parsed_audiencia_id = _uuid.UUID(str(audiencia_id))
+                    logger.info(f"💰 [ENHANCE] audiencia_id parseado: {parsed_audiencia_id}")
+                except Exception as parse_err:
+                    logger.error(f"💰 [ENHANCE] ❌ No se pudo parsear audiencia_id '{audiencia_id}': {parse_err}")
+            else:
+                logger.warning(f"💰 [ENHANCE] ⚠️ audiencia_id es None/vacío al registrar costo")
+            
+            try:
+                await registrar_uso_claude(
+                    db=None,
+                    servicio="claude_enhancement",
+                    modelo=settings.ANTHROPIC_MODEL,
+                    input_tokens=message.usage.input_tokens,
+                    output_tokens=message.usage.output_tokens,
+                    audiencia_id=parsed_audiencia_id,
+                )
+            except Exception as metric_err:
+                logger.error(f"Error registrando costo en BD: {metric_err}", exc_info=True)
+
             return {
                 "original": text,
                 "enhanced": enhanced_text,
                 "is_question": is_question,
                 "is_statement": is_statement,
                 "confidence": 0.95,  # Claude tiene alta confianza
+                "usd_cost": usd_cost,
             }
 
         except Exception as e:
             logger.error(f"Error enhancing segment: {e}")
-            # Fallback: usar limpieza rápida
-            from app.services.text_processing import clean_transcript, detect_question
+            from app.services.text_processing import clean_transcript
             fallback = clean_transcript(text)
 
             return {
@@ -183,19 +231,33 @@ Responde SOLO con un JSON válido (sin markdown):
                 "is_question": detect_question(fallback),
                 "is_statement": True,
                 "confidence": 0.5,
+                "usd_cost": 0.0,
             }
 
     def _build_context(self, previous_segments: List[Dict[str, str]]) -> str:
-        """Construye texto de contexto de segmentos anteriores."""
+        """Construye texto de contexto de segmentos anteriores.
+
+        USA texto_ia (no texto_mejorado) para evitar contaminar el contexto con
+        salidas incorrectas de Claude (ej. encabezados de acta mal generados).
+        Normaliza espacios y elimina saltos de línea para mantener el contexto
+        como línea única por segmento — esto evita confusión en el prompt.
+        """
         if not previous_segments:
             return ""
 
         context_parts = []
-        for seg in previous_segments[-self.max_context_segments :]:
+        for seg in previous_segments[-self.max_context_segments:]:
             speaker = seg.get("speaker_id", "DESCONOCIDO")
-            # Usar texto_mejorado si existe (tiene puntuación): Claude puede ver si el
-            # segmento anterior terminó en punto y decidir si el actual es continuación.
-            text = seg.get("texto_mejorado") or seg.get("texto_ia", "")
+            # Usar texto_ia (transcripción original de Deepgram) — más seguro que
+            # texto_mejorado que podría contener encabezados o texto incorrecto.
+            text = (seg.get("texto_ia") or "").strip()
+            if not text:
+                continue
+            # Eliminar saltos de línea para que el contexto sea una sola línea
+            text = " ".join(text.split())
+            # Limitar a 120 chars para no sobrecargar el prompt
+            if len(text) > 120:
+                text = text[:120] + "…"
             context_parts.append(f"{speaker}: {text}")
 
         return "\n".join(context_parts)
@@ -204,39 +266,46 @@ Responde SOLO con un JSON válido (sin markdown):
         self, text: str, speaker_id: str, context: str
     ) -> str:
         """Construye el prompt para Claude."""
-        return f"""Eres un digitador judicial experto del Distrito Judicial de Cusco, Perú.
+        return f"""Eres un digitador judicial del Distrito Judicial de Cusco, Perú.
 
-Tu tarea es mejorar el texto crudo de audio para producir texto de ACTA JUDICIAL FORMAL.
+Tu tarea es corregir ortografía, puntuación y mayúsculas del TEXTO CRUDO de Deepgram.
 
-CONTEXTO PREVIO:
+CONTEXTO PREVIO (solo para saber si el texto es continuación o frase nueva):
 {context if context else "Inicio de la audiencia"}
 
 HABLANTE: {speaker_id}
 TEXTO CRUDO: {text}
 
-CORRECCIONES PERMITIDAS (las tres únicas):
-1. PUNTUACIÓN: Agregar o corregir punto, coma, punto y coma, dos puntos, signos de pregunta (¿?), signos de exclamación (¡!). Los signos de puntuación NO cuentan como palabras agregadas.
-2. MAYÚSCULAS — regla estricta de continuidad:
-   - Primera letra del texto: SOLO si el CONTEXTO PREVIO termina con punto (.), interrogación (?), exclamación (!), o si el contexto dice "Inicio de la audiencia".
-   - Si el contexto termina con coma, punto y coma, dos puntos, o con cualquier palabra sin puntuación final → el texto es CONTINUACIÓN de oración → primera letra en MINÚSCULA.
-   - Cargos judiciales usados como título directo ("Señoría", "Doctor Pérez", "Fiscal Torres"): capitalizar solo el cargo/título.
-   - Nombres propios de personas cuando sean inequívocamente identificables como nombres propios.
-   - En caso de duda: minúscula.
-3. REEMPLAZO 1:1: Una palabra mal transcrita → su forma correcta (misma palabra, bien escrita). Ejemplo: "presuncion" → "presunción", "acusdo" → "acusado", "señoria" → "Señoría".
+═══ REGLA 0 — ARTEFACTOS DE AUDIO (aplicar PRIMERO) ═══
+a) REPETICIÓN DOBLE de palabra (disfluencia) → elimina la copia extra:
+   "lo lo" → "lo" | "no no" → "no" | "la la parte" → "la parte"
 
-PROHIBICIONES:
-- NO capitalizar la primera palabra por defecto — verificar siempre el contexto previo
-- NO agregar palabras nuevas que no estén en el texto crudo
-- NO completar oraciones ni añadir contexto
-- NO usar puntos suspensivos (...)
-- Si hay duda sobre mayúscula/minúscula, usar minúscula
+b) REPETICIÓN TRIPLE O MÁS (alucinación del ASR) → [SEGMENTO INAUDIBLE]:
+   "Port Port Port Port" → [SEGMENTO INAUDIBLE]
+   Umbral: 3+ repeticiones consecutivas = usar [SEGMENTO INAUDIBLE].
 
-CASOS ESPECIALES:
-- Si el texto tiene varias oraciones completas seguidas sin puntuación, agregarla donde corresponde
-- Respuestas cortas autónomas: "Sí.", "No.", "Correcto.", "De acuerdo." — poner punto final
-- Preguntas: usar ¿ al inicio y ? al final
+═══ REGLA 1 — MAYÚSCULAS ═══
+Primera letra:
+  • Contexto previo termina en . ? ! → mayúscula inicial (nueva oración)
+  • Contexto termina en , ; : o sin puntuación → minúscula (continuación)
+  • "Inicio de la audiencia" → mayúscula inicial
 
-DEVUELVE SOLO EL TEXTO MEJORADO (sin comillas, sin explicación):"""
+Dentro del texto: mayúscula tras . ? ! internos; nombres propios; en duda → minúscula.
+NUNCA capitalizar sustantivos comunes, adjetivos genéricos, preposiciones ni conjunciones.
+
+═══ REGLA 2 — PUNTUACIÓN ═══
+Agrega o corrige: , . ; : ¿? ¡!
+Si el texto termina con idea completa, agrega punto final.
+
+═══ REGLA 3 — CORRECCIÓN 1:1 ═══
+Corrige palabras mal transcritas. PROHIBIDO: agregar palabras, completar oraciones, parafrasear.
+
+⚠️ OBLIGATORIO: Devuelve ÚNICAMENTE el texto corregido del TEXTO CRUDO de arriba.
+NO añadas encabezados, títulos, ni texto del contexto previo.
+NO escribas "Acta", "Expediente" ni nada que no esté en el TEXTO CRUDO.
+La salida debe ser UNA sola línea continua (sin saltos de línea internos).
+
+TEXTO CORREGIDO:"""
 
     def _update_context(self, speaker_id: str, original: str, enhanced: str):
         """Actualiza el contexto de conversación."""

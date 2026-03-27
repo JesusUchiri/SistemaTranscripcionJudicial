@@ -46,6 +46,8 @@ export interface Audiencia {
     created_by: string
     created_at: string
     updated_at: string
+    costo_deepgram_usd?: number
+    costo_claude_usd?: number
 }
 
 export interface AudienciaCreate {

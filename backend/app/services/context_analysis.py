@@ -99,6 +99,19 @@ Responde SOLO con JSON válido (sin markdown):
 
             result = json.loads(response_text)
 
+            # Registrar costo
+            try:
+                from app.services.cost_tracker import registrar_uso_claude
+                await registrar_uso_claude(
+                    db=None,
+                    servicio="claude_context_analysis",
+                    modelo=settings.ANTHROPIC_MODEL,
+                    input_tokens=message.usage.input_tokens,
+                    output_tokens=message.usage.output_tokens,
+                )
+            except Exception as metric_err:
+                logger.error(f"Error registrando costo: {metric_err}")
+
             logger.info(f"Context analysis for '{word}': correct={result.get('is_correct')}")
             return result
 
@@ -175,6 +188,19 @@ Responde SOLO con JSON:
             response_text = message.content[0].text.strip()
             if response_text.startswith("```"):
                 response_text = response_text.split("\n", 1)[1].rsplit("\n```", 1)[0]
+
+            # Registrar costo
+            try:
+                from app.services.cost_tracker import registrar_uso_claude
+                await registrar_uso_claude(
+                    db=None,
+                    servicio="claude_phrase_correction",
+                    modelo=settings.ANTHROPIC_MODEL,
+                    input_tokens=message.usage.input_tokens,
+                    output_tokens=message.usage.output_tokens,
+                )
+            except Exception as metric_err:
+                logger.error(f"Error registrando costo: {metric_err}")
 
             return json.loads(response_text)
 

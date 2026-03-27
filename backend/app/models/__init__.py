@@ -7,6 +7,7 @@ from app.models.marcador import Marcador
 from app.models.segmento import Segmento
 from app.models.audit_log import AuditLog
 from app.models.acta import Acta
+from app.models.uso_api import UsoApi
 
 __all__ = [
     "Usuario",
@@ -16,5 +17,7 @@ __all__ = [
     "Marcador",
     "FraseEstandar",
     "Acta",
-    "AuditLog"
+    "AuditLog",
+    "UsoApi",
 ]
+

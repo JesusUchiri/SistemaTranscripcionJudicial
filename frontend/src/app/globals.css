@@ -295,6 +295,29 @@ body {
   animation: solidifyIn 0.25s ease-out forwards;
 }
 
+/* Claude mejorando: pulso sutil mientras espera la corrección completa */
+@keyframes enhancingPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+.segment-enhancing {
+  animation: enhancingPulse 1.4s ease-in-out infinite;
+  border-bottom: 1.5px dashed var(--accent-primary);
+  padding-bottom: 1px;
+}
+
+/* Palabras corregidas por Claude: flash sutil que se desvanece */
+@keyframes claudeCorrect {
+  0%   { background: rgba(166, 130, 70, 0.25); }
+  100% { background: transparent; }
+}
+
+.word-corrected-by-claude {
+  animation: claudeCorrect 1.2s ease-out forwards;
+  border-radius: 2px;
+}
+
 /* Palabra nueva: aparece con animación */
 .provisional-word {
   display: inline;

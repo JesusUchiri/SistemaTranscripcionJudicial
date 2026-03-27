@@ -319,6 +319,19 @@ CONTINUACIÓN:"""
         if prediction.startswith('"') and prediction.endswith('"'):
             prediction = prediction[1:-1]
 
+        # Registrar costo
+        try:
+            from app.services.cost_tracker import registrar_uso_claude
+            await registrar_uso_claude(
+                db=None,
+                servicio="claude_text_prediction",
+                modelo=settings.ANTHROPIC_MODEL,
+                input_tokens=message.usage.input_tokens,
+                output_tokens=message.usage.output_tokens,
+            )
+        except Exception as metric_err:
+            logger.error(f"Error registrando costo: {metric_err}")
+
         # No devolver si es muy corta o parece inválida
         if len(prediction) < 3 or prediction.lower() in ['none', 'null', '']:
             return None

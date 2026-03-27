@@ -14,11 +14,11 @@ class Settings(BaseSettings):
 
     # ── Deepgram ─────────────────────────────────────────
     DEEPGRAM_API_KEY: str = ""
-    DEEPGRAM_MODEL: str = "nova-2"
+    DEEPGRAM_MODEL: str = "nova-3"
 
     # ── Anthropic ────────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_MODEL: str = "claude-3-5-sonnet-20241022"  # Sonnet más reciente para mejoramiento en tiempo real
+    ANTHROPIC_MODEL: str = "claude-3-haiku-20240307"  # Haiku para pruebas (más barato)
 
     # ── HuggingFace ──────────────────────────────────────
     HF_TOKEN: str = ""

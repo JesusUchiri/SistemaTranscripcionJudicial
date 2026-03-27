@@ -1,13 +1,19 @@
 """
 Endpoint para subir archivos de audio y transcribirlos con Deepgram batch API.
+
+Flujo de 2 pasos (nuevo):
+  POST /subir    — sube el archivo, crea la audiencia (estado="pendiente"), sin transcribir
+  POST /procesar — aplica edición (regiones + filtros) y transcribe con Deepgram
+
+El endpoint original (POST /) sigue disponible para compatibilidad.
 """
 import logging
 import os
 import uuid
-from datetime import date, time
-from typing import Annotated
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,11 +24,12 @@ from app.models.audiencia import Audiencia
 from app.models.segmento import Segmento
 from app.models.usuario import Usuario
 from app.services.deepgram_batch import DeepgramBatchService
-from app.utils.audio_compress import compress_for_transcription
+from app.utils.audio_compress import compress_for_transcription, optimize_for_storage
+from app.utils.audio_editor import trim_regions, apply_filters, get_audio_duration
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/transcripcion-audio", tags=["transcripcion-audio"])
+router = APIRouter(tags=["transcripcion-audio"])
 
 # Tipos de audio permitidos
 ALLOWED_MIME_TYPES = {
@@ -39,22 +46,39 @@ ALLOWED_MIME_TYPES = {
     "audio/aac",
     "audio/m4a",
     "audio/x-m4a",
-    "video/webm",  # Some recorders save as webm with audio
+    "video/webm",
 }
 
-# Max file size: 2GB (soporta WAV estéreo hasta ~2h, MP3/AAC/FLAC hasta 40h)
-MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
 
+
+# ── Pydantic models ──────────────────────────────────────────────────────────
+
+class RegionInput(BaseModel):
+    start: float
+    end: float
+
+
+class FiltersInput(BaseModel):
+    noise_reduction: bool = False
+    normalize: bool = False
+    volume: float = 1.0
+    highpass: bool = False
+
+
+class ProcesarRequest(BaseModel):
+    audiencia_id: uuid.UUID
+    regions: list[RegionInput] = []
+    filters: FiltersInput = FiltersInput()
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _normalize_mime(content_type: str, filename: str) -> str:
-    """Normalize MIME type based on content_type and file extension."""
-    # Strip params like "audio/wav; codecs=1" → "audio/wav"
+    """Normaliza el MIME type basado en content_type y extensión."""
     base_type = (content_type or "").split(";")[0].strip().lower()
-
     if base_type and base_type in ALLOWED_MIME_TYPES:
         return base_type
-
-    # Fallback: derive from file extension
     ext = os.path.splitext(filename or "")[1].lower()
     ext_map = {
         ".wav": "audio/wav",
@@ -69,102 +93,20 @@ def _normalize_mime(content_type: str, filename: str) -> str:
     return ext_map.get(ext, base_type or "audio/wav")
 
 
-@router.post("", status_code=status.HTTP_200_OK)
-async def transcribir_audio(
-    audio: UploadFile = File(..., description="Archivo de audio a transcribir"),
-    expediente: str = Form(..., description="Número de expediente"),
-    juzgado: str = Form(..., description="Juzgado"),
-    tipo_audiencia: str = Form("Audiencia de Audio Subido", description="Tipo de audiencia"),
-    instancia: str = Form("Primera Instancia", description="Instancia"),
-    db: AsyncSession = Depends(get_db),
-    current_user: Usuario = Depends(get_current_user),
-):
-    """
-    Sube un archivo de audio, lo transcribe con Deepgram y crea la audiencia
-    con todos sus segmentos en una sola operación.
-    """
-    # Validate file type
-    logger.info(f"Upload recibido: filename={audio.filename}, content_type={audio.content_type!r}")
-    mime_type = _normalize_mime(audio.content_type, audio.filename)
-    logger.info(f"MIME normalizado: {mime_type}")
-    if mime_type not in ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Tipo de archivo no soportado: {audio.content_type}. "
-                   f"Se aceptan: WAV, MP3, MP4, M4A, OGG, WebM, FLAC, AAC"
-        )
+def _mime_from_path(audio_path: str) -> str:
+    ext = os.path.splitext(audio_path)[1].lower()
+    ext_map = {
+        ".wav": "audio/wav", ".mp3": "audio/mpeg", ".mp4": "audio/mp4",
+        ".m4a": "audio/mp4", ".ogg": "audio/ogg", ".webm": "audio/webm",
+        ".flac": "audio/flac", ".aac": "audio/aac",
+    }
+    return ext_map.get(ext, "audio/wav")
 
-    # Stream the file to disk in chunks to avoid loading everything in RAM
-    os.makedirs(settings.AUDIO_STORAGE_PATH, exist_ok=True)
-    audio_id = str(uuid.uuid4())
-    ext = os.path.splitext(audio.filename or ".wav")[1] or ".wav"
-    audio_filename = f"{audio_id}{ext}"
-    audio_path = os.path.join(settings.AUDIO_STORAGE_PATH, audio_filename)
 
-    audio_size = 0
-    CHUNK = 8 * 1024 * 1024  # 8MB chunks
-    try:
-        with open(audio_path, "wb") as f:
-            while True:
-                chunk = await audio.read(CHUNK)
-                if not chunk:
-                    break
-                audio_size += len(chunk)
-                if audio_size > MAX_FILE_SIZE:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"El archivo es demasiado grande. Máximo: {MAX_FILE_SIZE // (1024**3)}GB"
-                    )
-                f.write(chunk)
-    except HTTPException:
-        if os.path.exists(audio_path):
-            os.unlink(audio_path)
-        raise
-
-    if audio_size == 0:
-        os.unlink(audio_path)
-        raise HTTPException(status_code=400, detail="El archivo de audio está vacío")
-
-    # Create the audiencia record first
-    from datetime import datetime
-    now = datetime.now()
-    audiencia = Audiencia(
-        expediente=expediente,
-        juzgado=juzgado,
-        tipo_audiencia=tipo_audiencia,
-        instancia=instancia,
-        fecha=now.date(),
-        hora_inicio=now.time(),
-        estado="en_curso",
-        audio_path=audio_path,
-        created_by=current_user.id,
-    )
-    db.add(audiencia)
-    await db.flush()
-    await db.refresh(audiencia)
-
-    # Compress audio before sending to Deepgram (FFmpeg: 16kHz mono 64kbps MP3)
-    transcribe_path, was_compressed = await compress_for_transcription(audio_path)
-    transcribe_mime = "audio/mpeg" if was_compressed else mime_type
-
-    # Transcribe with Deepgram (read from disk — no double RAM usage)
-    try:
-        service = DeepgramBatchService()
-        result = await service.transcribe_file(transcribe_path, transcribe_mime)
-    except Exception as e:
-        # Update audiencia state to reflect error
-        audiencia.estado = "pendiente"
-        await db.flush()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error en la transcripción con Deepgram: {str(e)}"
-        )
-    finally:
-        if was_compressed and os.path.exists(transcribe_path):
-            os.unlink(transcribe_path)
-
-    # Save segments to DB
-    segments_data = result.get("segments", [])
+async def _guardar_segmentos(db: AsyncSession, audiencia: Audiencia, segments_data: list[dict]) -> list[str]:
+    """Guarda segmentos y auto-crea hablantes. Devuelve lista de speaker_ids únicos."""
+    from app.models.hablante import Hablante
+    from app.api.hablantes import COLORES_POR_ORDEN
 
     for seg_data in segments_data:
         segmento = Segmento(
@@ -180,15 +122,10 @@ async def transcribir_audio(
         )
         db.add(segmento)
 
-    # ── Auto-crear hablantes con colores distintos para cada speaker detectado ──
-    from app.models.hablante import Hablante
-    from app.api.hablantes import COLORES_POR_ORDEN
-
     unique_speakers = list(dict.fromkeys(
         seg_data["speaker_id"] for seg_data in segments_data
     ))
     for idx, speaker_id in enumerate(unique_speakers):
-        # Verificar si ya existe
         existing = await db.execute(
             select(Hablante).where(
                 Hablante.audiencia_id == audiencia.id,
@@ -208,10 +145,133 @@ async def transcribir_audio(
             )
             db.add(hablante)
 
-    # Update audiencia with transcription info
+    return unique_speakers
+
+
+async def _transcribir_desde_disco(
+    audio_path: str,
+    mime_type: str,
+    db: AsyncSession,
+    audiencia: Audiencia,
+) -> dict:
+    """Comprime si es necesario, transcribe con Deepgram, limpia temporales y registra costo."""
+    transcribe_path, was_compressed = await compress_for_transcription(audio_path)
+    transcribe_mime = "audio/mpeg" if was_compressed else mime_type
+    try:
+        service = DeepgramBatchService()
+        result = await service.transcribe_file(transcribe_path, transcribe_mime)
+        
+        # Registrar costo
+        duracion = result.get("duration", 0.0)
+        costo = 0.0
+        if duracion > 0:
+            try:
+                from app.services.cost_tracker import registrar_uso_deepgram
+                uso = await registrar_uso_deepgram(
+                    db=db,
+                    servicio="deepgram_batch",
+                    modelo=settings.DEEPGRAM_MODEL,
+                    duracion_segundos=duracion,
+                    modo="batch",
+                    diarize=True,
+                    audiencia_id=audiencia.id,
+                    usuario_id=audiencia.created_by,
+                )
+                costo = uso.costo_usd
+            except Exception as e:
+                logger.error(f"Error registrando costo Deepgram: {e}")
+                
+        result["usd_cost"] = costo
+
+        return result
+    finally:
+        if was_compressed and os.path.exists(transcribe_path):
+            os.unlink(transcribe_path)
+
+
+async def _stream_upload_to_disk(audio: UploadFile, audio_path: str) -> int:
+    """Guarda el archivo subido en disco en chunks. Devuelve el tamaño en bytes."""
+    audio_size = 0
+    CHUNK = 8 * 1024 * 1024  # 8MB
+    try:
+        with open(audio_path, "wb") as f:
+            while True:
+                chunk = await audio.read(CHUNK)
+                if not chunk:
+                    break
+                audio_size += len(chunk)
+                if audio_size > MAX_FILE_SIZE:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="El archivo es demasiado grande. Máximo: 2GB",
+                    )
+                f.write(chunk)
+    except HTTPException:
+        if os.path.exists(audio_path):
+            os.unlink(audio_path)
+        raise
+    if audio_size == 0:
+        os.unlink(audio_path)
+        raise HTTPException(status_code=400, detail="El archivo de audio está vacío")
+    return audio_size
+
+
+# ── Endpoint original (compatibilidad) ──────────────────────────────────────
+
+@router.post("", status_code=status.HTTP_200_OK)
+async def transcribir_audio(
+    audio: UploadFile = File(..., description="Archivo de audio a transcribir"),
+    expediente: str = Form(...),
+    juzgado: str = Form(...),
+    tipo_audiencia: str = Form("Audiencia de Audio Subido"),
+    instancia: str = Form("Primera Instancia"),
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Sube y transcribe en una sola operación (endpoint original)."""
+    logger.info(f"Upload recibido: filename={audio.filename}, content_type={audio.content_type!r}")
+    mime_type = _normalize_mime(audio.content_type, audio.filename)
+    if mime_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de archivo no soportado: {audio.content_type}. "
+                   f"Se aceptan: WAV, MP3, MP4, M4A, OGG, WebM, FLAC, AAC",
+        )
+
+    os.makedirs(settings.AUDIO_STORAGE_PATH, exist_ok=True)
+    audio_id = str(uuid.uuid4())
+    ext = os.path.splitext(audio.filename or ".wav")[1] or ".wav"
+    audio_path = os.path.join(settings.AUDIO_STORAGE_PATH, f"{audio_id}{ext}")
+
+    await _stream_upload_to_disk(audio, audio_path)
+
+    now = datetime.now()
+    audiencia = Audiencia(
+        expediente=expediente,
+        juzgado=juzgado,
+        tipo_audiencia=tipo_audiencia,
+        instancia=instancia,
+        fecha=now.date(),
+        hora_inicio=now.time(),
+        estado="en_curso",
+        audio_path=audio_path,
+        created_by=current_user.id,
+    )
+    db.add(audiencia)
+    await db.flush()
+    await db.refresh(audiencia)
+
+    try:
+        result = await _transcribir_desde_disco(audio_path, mime_type, db, audiencia)
+    except Exception as e:
+        audiencia.estado = "pendiente"
+        await db.flush()
+        raise HTTPException(status_code=500, detail=f"Error en la transcripción con Deepgram: {str(e)}")
+
+    segments_data = result.get("segments", [])
+    unique_speakers = await _guardar_segmentos(db, audiencia, segments_data)
     audiencia.estado = "transcrita"
     audiencia.audio_duration_seconds = result.get("duration", 0.0)
-
     await db.flush()
 
     return {
@@ -225,89 +285,208 @@ async def transcribir_audio(
     }
 
 
+# ── Nuevo flujo 2 pasos ──────────────────────────────────────────────────────
+
+@router.post("/subir", status_code=status.HTTP_200_OK)
+async def subir_audio(
+    audio: UploadFile = File(..., description="Archivo de audio"),
+    expediente: str = Form(...),
+    juzgado: str = Form(...),
+    tipo_audiencia: str = Form("Audiencia de Audio Subido"),
+    instancia: str = Form("Primera Instancia"),
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """
+    Paso 1 — Sube el archivo y crea la audiencia (estado='pendiente').
+    No transcribe: devuelve audiencia_id + duracion para que el usuario
+    pueda ajustar el audio antes de procesar.
+    """
+    logger.info(f"[subir] filename={audio.filename}, content_type={audio.content_type!r}")
+    mime_type = _normalize_mime(audio.content_type, audio.filename)
+    if mime_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de archivo no soportado: {audio.content_type}. "
+                   f"Se aceptan: WAV, MP3, MP4, M4A, OGG, WebM, FLAC, AAC",
+        )
+
+    os.makedirs(settings.AUDIO_STORAGE_PATH, exist_ok=True)
+    audio_id = str(uuid.uuid4())
+    ext = os.path.splitext(audio.filename or ".wav")[1] or ".wav"
+    audio_path = os.path.join(settings.AUDIO_STORAGE_PATH, f"{audio_id}{ext}")
+
+    await _stream_upload_to_disk(audio, audio_path)
+
+    now = datetime.now()
+    audiencia = Audiencia(
+        expediente=expediente,
+        juzgado=juzgado,
+        tipo_audiencia=tipo_audiencia,
+        instancia=instancia,
+        fecha=now.date(),
+        hora_inicio=now.time(),
+        estado="pendiente",
+        audio_path=audio_path,
+        created_by=current_user.id,
+    )
+    db.add(audiencia)
+    await db.flush()
+    await db.refresh(audiencia)
+
+    # Obtener duración real con ffprobe
+    duracion = await get_audio_duration(audio_path) or 0.0
+    if duracion > 0:
+        audiencia.audio_duration_seconds = duracion
+        await db.flush()
+
+    # Optimizar para storage: convierte WAV/AIFF/vídeo a FLAC 22kHz lossless.
+    # Archivos ya comprimidos (MP3, AAC, OGG, FLAC) se mantienen sin tocar.
+    orig_size_mb = os.path.getsize(audio_path) / 1024 / 1024
+    optimized_path, was_optimized = await optimize_for_storage(audio_path)
+    if was_optimized:
+        # Actualizar la ruta en BD y eliminar el archivo original pesado
+        audiencia.audio_path = optimized_path
+        await db.flush()
+        os.unlink(audio_path)
+        opt_size_mb = os.path.getsize(optimized_path) / 1024 / 1024
+        logger.info(
+            f"[subir] Original eliminado ({orig_size_mb:.1f}MB). "
+            f"Almacenado como FLAC: {opt_size_mb:.1f}MB"
+        )
+
+    logger.info(f"[subir] Audiencia creada: {audiencia.id}, duración: {duracion:.1f}s")
+    return {
+        "audiencia_id": str(audiencia.id),
+        "duracion_segundos": duracion,
+        "mensaje": "Audio subido. Ajusta las regiones y filtros antes de procesar.",
+    }
+
+
+@router.post("/procesar", status_code=status.HTTP_200_OK)
+async def procesar_audio(
+    req: ProcesarRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """
+    Paso 2 — Aplica edición (regiones + filtros) y transcribe con Deepgram.
+
+    - regions: lista de {start, end} en segundos; vacía = procesar todo el audio
+    - filters: ruido, normalización, volumen, graves
+    """
+    result_db = await db.execute(
+        select(Audiencia).where(Audiencia.id == req.audiencia_id)
+    )
+    audiencia = result_db.scalar_one_or_none()
+    if audiencia is None:
+        raise HTTPException(status_code=404, detail="Audiencia no encontrada")
+
+    if current_user.rol not in ("admin", "supervisor"):
+        if audiencia.created_by != current_user.id:
+            raise HTTPException(status_code=404, detail="Audiencia no encontrada")
+
+    if not audiencia.audio_path or not os.path.exists(audiencia.audio_path):
+        raise HTTPException(status_code=404, detail="No hay archivo de audio disponible")
+
+    mime_type = _mime_from_path(audiencia.audio_path)
+    audiencia.estado = "en_curso"
+    await db.flush()
+
+    # Archivos temporales a limpiar al final
+    temp_files: list[str] = []
+    working_path = audiencia.audio_path
+
+    try:
+        # 1. Recortar regiones seleccionadas
+        if req.regions:
+            regions_dicts = [{"start": r.start, "end": r.end} for r in req.regions]
+            trimmed_path, was_trimmed = await trim_regions(working_path, regions_dicts)
+            if was_trimmed:
+                temp_files.append(trimmed_path)
+                working_path = trimmed_path
+
+        # 2. Aplicar filtros de audio
+        filters_dict = req.filters.model_dump()
+        filtered_path, was_filtered = await apply_filters(working_path, filters_dict)
+        if was_filtered:
+            temp_files.append(filtered_path)
+            working_path = filtered_path
+
+        # 3. Comprimir + transcribir con Deepgram
+        try:
+            result = await _transcribir_desde_disco(working_path, mime_type, db, audiencia)
+        except Exception as e:
+            audiencia.estado = "pendiente"
+            await db.flush()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error en la transcripción: {str(e)}",
+            )
+
+    finally:
+        for tmp in temp_files:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    segments_data = result.get("segments", [])
+    unique_speakers = await _guardar_segmentos(db, audiencia, segments_data)
+    audiencia.estado = "transcrita"
+    audiencia.audio_duration_seconds = result.get("duration", 0.0)
+    await db.flush()
+
+    return {
+        "audiencia_id": str(audiencia.id),
+        "expediente": audiencia.expediente,
+        "estado": "transcrita",
+        "total_segmentos": len(segments_data),
+        "duracion_segundos": result.get("duration", 0.0),
+        "hablantes_detectados": len(unique_speakers),
+        "costo_total_usd": result.get("usd_cost", 0.0),
+        "mensaje": f"Audio procesado y transcrito. {len(segments_data)} segmentos con {len(unique_speakers)} hablantes.",
+    }
+
+
+# ── Retranscribir (refactorizado con helpers) ────────────────────────────────
+
 @router.post("/{audiencia_id}/retranscribir", status_code=status.HTTP_200_OK)
 async def retranscribir_audio_existente(
     audiencia_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: Usuario = Depends(get_current_user),
 ):
-    """
-    Re-transcribe el audio de una audiencia existente.
-    Útil si se quiere mejorar la transcripción con un modelo actualizado.
-    """
-    result = await db.execute(
+    """Re-transcribe el audio de una audiencia existente."""
+    result_db = await db.execute(
         select(Audiencia).where(Audiencia.id == audiencia_id)
     )
-    audiencia = result.scalar_one_or_none()
+    audiencia = result_db.scalar_one_or_none()
     if audiencia is None:
         raise HTTPException(status_code=404, detail="Audiencia no encontrada")
 
-    # Check permissions
     if current_user.rol not in ("admin", "supervisor"):
         if audiencia.created_by != current_user.id:
             raise HTTPException(status_code=404, detail="Audiencia no encontrada")
 
-    # Check audio exists
     if not audiencia.audio_path or not os.path.exists(audiencia.audio_path):
         raise HTTPException(status_code=404, detail="No hay archivo de audio disponible")
 
-    # Determine mime type from extension
-    ext = os.path.splitext(audiencia.audio_path)[1].lower()
-    ext_map = {
-        ".wav": "audio/wav",
-        ".mp3": "audio/mpeg",
-        ".mp4": "audio/mp4",
-        ".m4a": "audio/mp4",
-        ".ogg": "audio/ogg",
-        ".webm": "audio/webm",
-        ".flac": "audio/flac",
-    }
-    mime_type = ext_map.get(ext, "audio/wav")
+    mime_type = _mime_from_path(audiencia.audio_path)
 
-    # Delete existing segments
     existing = await db.execute(
         select(Segmento).where(Segmento.audiencia_id == audiencia_id)
     )
     for seg in existing.scalars().all():
         await db.delete(seg)
 
-    # Compress audio before sending to Deepgram
-    transcribe_path, was_compressed = await compress_for_transcription(audiencia.audio_path)
-    transcribe_mime = "audio/mpeg" if was_compressed else mime_type
-
-    # Re-transcribe
     try:
-        service = DeepgramBatchService()
-        result = await service.transcribe_file(transcribe_path, transcribe_mime)
+        result = await _transcribir_desde_disco(audiencia.audio_path, mime_type, db, audiencia)
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error en la transcripción: {str(e)}"
-        )
-    finally:
-        if was_compressed and os.path.exists(transcribe_path):
-            os.unlink(transcribe_path)
+        raise HTTPException(status_code=500, detail=f"Error en la transcripción: {str(e)}")
 
-    # Save new segments
     segments_data = result.get("segments", [])
-
-    for seg_data in segments_data:
-        segmento = Segmento(
-            audiencia_id=audiencia.id,
-            speaker_id=seg_data["speaker_id"],
-            texto_ia=seg_data["texto_ia"],
-            timestamp_inicio=seg_data["timestamp_inicio"],
-            timestamp_fin=seg_data["timestamp_fin"],
-            confianza=seg_data.get("confianza", 0.95),
-            es_provisional=False,
-            fuente="batch",
-            orden=seg_data["orden"],
-        )
-        db.add(segmento)
-
+    await _guardar_segmentos(db, audiencia, segments_data)
     audiencia.estado = "transcrita"
     audiencia.audio_duration_seconds = result.get("duration", 0.0)
-
     await db.flush()
 
     return {
@@ -315,5 +494,6 @@ async def retranscribir_audio_existente(
         "total_segmentos": len(segments_data),
         "duracion_segundos": result.get("duration", 0.0),
         "hablantes_detectados": result.get("speakers_count", 0),
+        "costo_total_usd": result.get("usd_cost", 0.0),
         "mensaje": f"Audio re-transcrito. {len(segments_data)} segmentos generados.",
     }

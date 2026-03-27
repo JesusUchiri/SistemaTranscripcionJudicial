@@ -29,6 +29,7 @@ interface CanvasState {
     elapsedSeconds: number
     connectionStatus: 'disconnected' | 'connected' | 'reconnecting'
     segmentCount: number
+    claudeStreamingCost: number
 
     // Audio sync state
     currentAudioTime: number
@@ -40,6 +41,11 @@ interface CanvasState {
 
     // Bookmarks
     bookmarks: Bookmark[]
+
+    // Segmentos que Claude está mejorando en este momento
+    enhancingSegmentIds: string[]
+    setEnhancingSegments: (ids: string[]) => void
+    clearEnhancingSegments: (ids: string[]) => void
 
     // Detecciones de variables en transcripción
     varDetecciones: Array<{ key: string; valorDetectado: string; texto: string; timestamp: number }>
@@ -55,6 +61,7 @@ interface CanvasState {
     setTranscribing: (value: boolean) => void
     setConnectionStatus: (status: 'disconnected' | 'connected' | 'reconnecting') => void
     setElapsedSeconds: (seconds: number) => void
+    setClaudeStreamingCost: (cost: number) => void
 
     // Audio sync actions
     setCurrentAudioTime: (time: number) => void
@@ -83,6 +90,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     elapsedSeconds: 0,
     connectionStatus: 'disconnected',
     segmentCount: 0,
+    claudeStreamingCost: 0,
 
     // Audio sync state
     currentAudioTime: 0,
@@ -94,6 +102,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     // Bookmarks
     bookmarks: [],
+
+    // Segmentos que Claude está mejorando
+    enhancingSegmentIds: [],
+    setEnhancingSegments: (ids) => set({ enhancingSegmentIds: ids }),
+    clearEnhancingSegments: (ids) => set((state) => ({
+        enhancingSegmentIds: state.enhancingSegmentIds.filter(id => !ids.includes(id)),
+    })),
 
     // Detecciones de variables
     varDetecciones: [],
@@ -230,6 +245,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     setConnectionStatus: (status) => set({ connectionStatus: status }),
 
     setElapsedSeconds: (seconds) => set({ elapsedSeconds: seconds }),
+    
+    setClaudeStreamingCost: (cost) => set({ claudeStreamingCost: cost }),
 
     // Audio sync actions
     setCurrentAudioTime: (time) => {
@@ -315,7 +332,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 segments: newSegments,
                 segmentCount: newSegments.length,
                 wordCount: totalWords,
-                lastConsolidatedSegmentId: newSegment.id
+                lastConsolidatedSegmentId: newSegment.id,
+                enhancingSegmentIds: state.enhancingSegmentIds.filter(id => !oldIds.includes(id)),
             }
         }),
 
@@ -338,11 +356,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             elapsedSeconds: 0,
             connectionStatus: 'disconnected',
             segmentCount: 0,
+            claudeStreamingCost: 0.0,
             currentAudioTime: 0,
             activeSegmentId: null,
             isSeeking: false,
             varDetecciones: [],
             editedSegmentIds: [],
             bookmarks: [],
+            enhancingSegmentIds: [],
         }),
 }))

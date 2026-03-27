@@ -99,6 +99,32 @@ async def listar_audiencias(
     result = await db.execute(query)
     items = result.scalars().all()
 
+    # Inyectar costos desde UsoApi
+    if items:
+        from app.models.uso_api import UsoApi
+        audiencia_ids = [item.id for item in items]
+        
+        # Agrupar por audiencia y servicio
+        costos_query = select(
+            UsoApi.audiencia_id,
+            func.sum(func.case((UsoApi.servicio.like("deepgram%"), UsoApi.costo_usd), else_=0.0)).label("dg_cost"),
+            func.sum(func.case((UsoApi.servicio.like("claude%"), UsoApi.costo_usd), else_=0.0)).label("cl_cost")
+        ).where(
+            UsoApi.audiencia_id.in_(audiencia_ids)
+        ).group_by(UsoApi.audiencia_id)
+
+        costos_res = await db.execute(costos_query)
+        costos_map = {row.audiencia_id: {"dg": row.dg_cost or 0.0, "cl": row.cl_cost or 0.0} for row in costos_res.all()}
+
+        for item in items:
+            c = costos_map.get(item.id, {"dg": 0.0, "cl": 0.0})
+            setattr(item, "costo_deepgram_usd", c["dg"])
+            setattr(item, "costo_claude_usd", c["cl"])
+    else:
+        for item in items:
+            setattr(item, "costo_deepgram_usd", 0.0)
+            setattr(item, "costo_claude_usd", 0.0)
+
     return AudienciaListResponse(items=items, total=total)
 
 
@@ -116,6 +142,18 @@ async def obtener_audiencia(
         raise HTTPException(status_code=404, detail="Audiencia no encontrada")
     if not _puede_acceder_audiencia(audiencia, current_user):
         raise HTTPException(status_code=404, detail="Audiencia no encontrada")
+
+    # Inyectar costos desde UsoApi
+    from app.models.uso_api import UsoApi
+    dg = await db.execute(
+        select(func.sum(UsoApi.costo_usd)).where(UsoApi.audiencia_id == audiencia_id, UsoApi.servicio.like("deepgram%"))
+    )
+    cl = await db.execute(
+        select(func.sum(UsoApi.costo_usd)).where(UsoApi.audiencia_id == audiencia_id, UsoApi.servicio.like("claude%"))
+    )
+    setattr(audiencia, "costo_deepgram_usd", dg.scalar() or 0.0)
+    setattr(audiencia, "costo_claude_usd", cl.scalar() or 0.0)
+
     return audiencia
 
 

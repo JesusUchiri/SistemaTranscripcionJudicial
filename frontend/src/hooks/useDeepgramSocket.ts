@@ -99,39 +99,38 @@ export function useDeepgramSocket(audienciaId: string) {
                             // Si este segmento reemplaza a intermedios, hacer la sustitución
                             const replacesIds: string[] = (data as any).replaces || []
                             if (replacesIds.length > 0) {
-                                replaceSegments(replacesIds, segment)
+                                useCanvasStore.getState().clearEnhancingSegments(replacesIds)
+                                useCanvasStore.getState().replaceSegments(replacesIds, segment)
                                 // NOTA: No limpiar provisional aquí, porque Claude puede
                                 // demorar 2s, y el usuario podría ya estar hablando palabras nuevas.
                             } else {
-                                addSegment(segment)
-                                // Trim provisional instead of wiping — preserve words BEYOND the confirmed
-                                // segment. This prevents "reduction" when non-finals are in-flight (~200-500ms
-                                // ahead of finals): user sees e.g. 10 provisional words, 6 get confirmed,
-                                // remaining 4 stay visible as provisional rather than disappearing.
-                                const provState = useCanvasStore.getState()
-                                const provWords = provState.provisionalWords
+                                // Capturar provisional ANTES de addSegment (que lo limpia internamente).
+                                // Así podemos preservar las palabras que van MÁS ALLÁ de lo confirmado
+                                // (non-finals en vuelo ~200-500ms adelante de finals):
+                                // e.g. 10 palabras provisionales, 6 confirmadas → las 4 restantes se preservan.
+                                const provWordsBefore = useCanvasStore.getState().provisionalWords
+                                useCanvasStore.getState().addSegment(segment)
                                 const confirmedWordCount = (segment.texto_ia || '').trim().split(/\s+/).filter(Boolean).length
-                                const remainingWords = provWords.slice(confirmedWordCount)
+                                const remainingWords = provWordsBefore.slice(confirmedWordCount)
                                 if (remainingWords.length > 0) {
-                                    updateProvisional(
+                                    useCanvasStore.getState().updateProvisional(
                                         remainingWords.map(w => w.word).join(' '),
                                         msg.speaker,
                                         remainingWords,
                                     )
-                                } else {
-                                    clearProvisional()
                                 }
+                                // Sin palabras restantes: addSegment ya limpió provisional
                             }
                         } else {
                             // Provisional — update the floating text with word-level data
-                            updateProvisional(msg.text, msg.speaker, msg.words || [])
+                            useCanvasStore.getState().updateProvisional(msg.text, msg.speaker, msg.words || [])
                         }
                         break
                     }
 
                     case 'status':
                         if (data.status === 'connected') {
-                            setConnectionStatus('connected')
+                            useCanvasStore.getState().setConnectionStatus('connected')
                         }
                         break
 
@@ -152,6 +151,21 @@ export function useDeepgramSocket(audienciaId: string) {
                         setSuggestions(prev => [...prev, suggestion])
                         break
                     }
+
+                    case 'enhancing': {
+                        // Claude está mejorando estos segmentos — marcarlos visualmente
+                        const ids: string[] = data.segment_ids || []
+                        if (ids.length > 0) useCanvasStore.getState().setEnhancingSegments(ids)
+                        break
+                    }
+
+                    case 'cost_update': {
+                        console.log('RECIBIDO COSTO CLAUDE WS:', data.claude_usd)
+                        if (typeof data.claude_usd === 'number') {
+                            useCanvasStore.getState().setClaudeStreamingCost(data.claude_usd)
+                        }
+                        break
+                    }
                 }
             } catch (e) {
                 console.error('Error parsing WebSocket message:', e)
@@ -160,13 +174,13 @@ export function useDeepgramSocket(audienciaId: string) {
 
         ws.onclose = (event) => {
             setIsConnected(false)
-            setConnectionStatus('disconnected')
+            useCanvasStore.getState().setConnectionStatus('disconnected')
             console.log(`WebSocket closed — code: ${event.code}, reason: "${event.reason}", wasClean: ${event.wasClean}`)
 
             // Auto-reconnect
             if (reconnectAttemptsRef.current < maxReconnectAttempts) {
                 reconnectAttemptsRef.current++
-                setConnectionStatus('reconnecting')
+                useCanvasStore.getState().setConnectionStatus('reconnecting')
                 setTimeout(connect, reconnectIntervalMs)
             }
         }
@@ -175,7 +189,7 @@ export function useDeepgramSocket(audienciaId: string) {
             console.error('WebSocket error event:', e)
             setError('Error de conexión WebSocket')
         }
-    }, [audienciaId, addSegment, updateProvisional, clearProvisional, setConnectionStatus, detectarVariables, replaceSegments])
+    }, [audienciaId])
 
     const sendAudio = useCallback(
         (base64Data: string, sequence: number) => {
@@ -197,16 +211,16 @@ export function useDeepgramSocket(audienciaId: string) {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ type: 'stop' }))
         }
-        setTranscribing(false)
-    }, [setTranscribing])
+        useCanvasStore.getState().setTranscribing(false)
+    }, [])
 
     const disconnect = useCallback(() => {
         reconnectAttemptsRef.current = maxReconnectAttempts // Prevent reconnection
         wsRef.current?.close()
         wsRef.current = null
         setIsConnected(false)
-        setConnectionStatus('disconnected')
-    }, [setConnectionStatus])
+        useCanvasStore.getState().setConnectionStatus('disconnected')
+    }, [])
 
     // Cleanup on unmount
     useEffect(() => {

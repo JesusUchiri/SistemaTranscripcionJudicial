@@ -24,6 +24,6 @@ router.include_router(marcadores_router)
 router.include_router(frases_router)
 router.include_router(analysis_router)
 router.include_router(prediction_router)
-router.include_router(transcripcion_audio_router)
+router.include_router(transcripcion_audio_router, prefix="/api/transcripcion-audio")
 router.include_router(actas_router)
 

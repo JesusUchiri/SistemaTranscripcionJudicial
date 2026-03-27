@@ -116,8 +116,8 @@ export default function AdminDashboard() {
                         {[
                             { label: 'Usuarios', value: totalUsuarios },
                             { label: 'Transcripciones', value: totalTranscripciones },
-                            { label: 'Costo Deepgram', value: `$${totalDeepgram.toFixed(3)}`, sub: 'USD · streaming $0.0059/min' },
-                            { label: 'Costo Claude', value: `$${totalClaude.toFixed(4)}`, sub: 'USD · tokens actas' },
+                            { label: 'Costo Deepgram', value: `$${totalDeepgram.toFixed(4)}`, sub: 'USD · Costo exacto API' },
+                            { label: 'Costo Claude', value: `$${totalClaude.toFixed(4)}`, sub: 'USD · Costo exacto API' },
                         ].map((stat) => (
                             <div key={stat.label} className="stat-card animate-fade-in" style={{ borderLeft: '4px solid var(--accent-primary)' }}>
                                 <span className="stat-card__value text-2xl sm:text-3xl">{stat.value}</span>
@@ -201,13 +201,13 @@ export default function AdminDashboard() {
                                                     {u.rol === 'admin' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : u.transcripciones_count}
                                                 </td>
                                                 <td className="px-6 py-4 text-right font-mono hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>
-                                                    {u.rol === 'admin' ? '—' : `$${u.costo_deepgram_usd.toFixed(3)}`}
+                                                    {u.rol === 'admin' ? '—' : `$${u.costo_deepgram_usd.toFixed(4)}`}
                                                 </td>
                                                 <td className="px-6 py-4 text-right font-mono hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>
                                                     {u.rol === 'admin' ? '—' : `$${u.costo_claude_usd.toFixed(4)}`}
                                                 </td>
                                                 <td className="px-6 py-4 text-right font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
-                                                    {u.rol === 'admin' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : `$${u.costo_total_usd.toFixed(3)}`}
+                                                    {u.rol === 'admin' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : `$${u.costo_total_usd.toFixed(4)}`}
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
                                                     <div className="flex justify-end gap-2">

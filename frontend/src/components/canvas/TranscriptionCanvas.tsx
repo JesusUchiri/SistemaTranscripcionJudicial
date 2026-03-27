@@ -143,10 +143,28 @@ interface CanvasProps {
  * but uses palabras_json only for confidence lookups.
  * This ensures Claude's capitalization and punctuation are always visible.
  */
+/**
+ * Computes which word indices changed between original and enhanced text.
+ * Uses normalized comparison (ignore punctuation, lowercase).
+ * Returns a Set of indices in the enhanced text that differ from original.
+ */
+function computeChangedWordIndices(original: string, enhanced: string): Set<number> {
+    const normalize = (w: string) => w.toLowerCase().replace(/[.,;:!?¡¿«»\-'"]/g, '').trim()
+    const origWords = original.trim().split(/\s+/).map(normalize)
+    const enhWords = enhanced.trim().split(/\s+/)
+    const changed = new Set<number>()
+    // Align word by word — if enhanced word doesn't match original word at same position, mark as changed
+    enhWords.forEach((w, i) => {
+        if (normalize(w) !== (origWords[i] ?? '')) changed.add(i)
+    })
+    return changed
+}
+
 function renderSegmentWords(
     texto: string,
     palabrasJson: any[] | null,
     segId: string,
+    changedIndices?: Set<number>,
 ): string {
     if (!texto) return ''
 
@@ -162,16 +180,20 @@ function renderSegmentWords(
     }
 
     const words = texto.trim().split(/\s+/)
-    return words.map(wordText => {
+    return words.map((wordText, idx) => {
         const key = wordText.toLowerCase().replace(/[.,;:!?¡¿«»\-]/g, '')
         const conf = confMap.size > 0 ? (confMap.get(key) ?? 1.0) : 1.0
         const shouldMark = conf < 0.85 &&
             !GRAMMAR_WORDS.has(key) &&
             !KNOWN_LEGAL_TERMS.has(key) &&
             key.length > 2
+        const isChanged = changedIndices?.has(idx) ?? false
         if (shouldMark) {
             const confPercent = Math.round(conf * 100)
-            return `<span class="text-low-confidence" data-low-confidence="true" data-confidence="${conf}" data-segment-id="${segId}" title="Confianza: ${confPercent}%">${wordText}</span>`
+            return `<span class="text-low-confidence${isChanged ? ' word-corrected-by-claude' : ''}" data-low-confidence="true" data-confidence="${conf}" data-segment-id="${segId}" title="Confianza: ${confPercent}%">${wordText}</span>`
+        }
+        if (isChanged) {
+            return `<span class="word-corrected-by-claude">${wordText}</span>`
         }
         return wordText
     }).join(' ') + ' '
@@ -209,6 +231,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         activeSegmentId,
         editedSegmentIds,
         lastConsolidatedSegmentId,
+        enhancingSegmentIds,
         updateSegment,
         clearLastConsolidated,
     } = useCanvasStore()
@@ -235,7 +258,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         isActive: boolean
         segmentIds: string[]
         pos: { x: number; y: number }
-    }>({ isActive: false, segmentIds: [], pos: { x: 0, y: 0 } })
+        anchor: 'above' | 'below'
+    }>({ isActive: false, segmentIds: [], pos: { x: 0, y: 0 }, anchor: 'below' })
 
     const prevSegmentCountRef = useRef(0)
     const prevSegmentIdsRef = useRef<string[]>([])
@@ -246,6 +270,10 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
     // Tracks last confirmed segment speaker — read by provisional effect without adding
     // `segments` to its deps (which would cause provisional re-insertion on each segment add).
     const lastConfirmedSpeakerRef = useRef<string | null>(null)
+    // Pauses provisional DOM updates while the user is actively selecting text.
+    // Without this, each new word causes a DOM mutation that destroys the browser selection.
+    const isSelectingRef = useRef(false)
+    const selectionResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     // Build speaker lookup map for O(1) access
     const speakerMap = useMemo(() => {
@@ -379,8 +407,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 return false
             },
         },
-        onUpdate: ({ editor: ed }) => {
-            if (soloLectura || !onSegmentoEditado) return
+        onUpdate: ({ editor: ed, transaction }) => {
+            if (soloLectura || !onSegmentoEditado || !transaction.docChanged) return
 
             // Find which segment the cursor is currently inside
             const { from } = ed.state.selection
@@ -533,6 +561,11 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                         const isEdited = editedSegmentIds.includes(seg.id)
                         const timestamp = seg.timestamp_inicio || 0
 
+                        // Compute word diff if Claude improved the text
+                        const changedIndices = (seg.texto_mejorado && seg.texto_ia && !seg.texto_editado)
+                            ? computeChangedWordIndices(seg.texto_ia, seg.texto_mejorado)
+                            : undefined
+
                         const classes = ['segment-clickable', 'segment-confirming']
                         if (isEdited) classes.push('segment-edited')
 
@@ -540,7 +573,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                             htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}" data-first-segment-id="${seg.id}"></speaker-label>`)
                         }
 
-                        const segmentHtml = renderSegmentWords(texto, seg.palabras_json, seg.id)
+                        const segmentHtml = renderSegmentWords(texto, seg.palabras_json, seg.id, changedIndices)
 
                         const segmentClasses = ['segment-text', ...classes]
                         htmlParts.push(`<span class="${segmentClasses.join(' ')}" data-segment-id="${seg.id}" data-timestamp="${timestamp}" data-edited="${isEdited}">${segmentHtml}</span>`)
@@ -625,8 +658,10 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         prevSegmentCountRef.current = segments.length
         prevSegmentIdsRef.current = currentIds
 
-        // Resetear contador de palabras provisionales
-        prevProvisionalWordCountRef.current = 0
+        // NO resetear prevProvisionalWordCountRef aquí: cuando el hook preserve palabras
+        // restantes (remaining words), el efecto provisional las verá como estables
+        // (prevCount >= words.length) y no las re-animará. Si no quedan palabras,
+        // el efecto provisional lo resetea a 0 cuando ve provisionalText=null.
 
         // Bulk load: primera carga de muchos segmentos (ej. al reanudar transcripción)
         const isBulkLoad = prevCount === 0 && nuevos.length > 5
@@ -681,6 +716,23 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         }))
     }, [editor, segments, editedSegmentIds, getSpeakerInfo, hablantes])
 
+    /* ── Enhancing segments — Claude mejorando en tiempo real ── */
+
+    useEffect(() => {
+        if (!editor) return
+
+        // Limpiar estado previo
+        editor.view.dom.querySelectorAll('.segment-enhancing').forEach(el =>
+            el.classList.remove('segment-enhancing')
+        )
+
+        // Marcar segmentos que Claude está mejorando ahora mismo
+        for (const segId of enhancingSegmentIds) {
+            const el = editor.view.dom.querySelector(`[data-segment-id="${segId}"]`)
+            if (el) el.classList.add('segment-enhancing')
+        }
+    }, [editor, enhancingSegmentIds])
+
     /* ── Active segment highlighting during playback ── */
 
     useEffect(() => {
@@ -721,9 +773,13 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         const newHtml = renderSegmentWords(texto, seg.palabras_json, seg.id)
         domEl.innerHTML = newHtml
 
-        // También removeProvisional porque addSegment lo marcó como consolidado
-        editor.commands.removeProvisional()
-        prevProvisionalWordCountRef.current = 0
+        // Limpiar provisional SOLO si el store ya lo eliminó (path addSegment/consolidación).
+        // Cuando Claude reemplaza (replaceSegments), el usuario puede seguir hablando —
+        // no tocar el provisional en curso para no borrar palabras visibles.
+        if (!useCanvasStore.getState().provisionalText) {
+            editor.commands.removeProvisional()
+            prevProvisionalWordCountRef.current = 0
+        }
         // Limpiar para evitar que el efecto se re-ejecute con datos viejos
         clearLastConsolidated()
     }, [editor, lastConsolidatedSegmentId, segments, getSpeakerInfo, clearLastConsolidated])
@@ -732,6 +788,10 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
 
     useEffect(() => {
         if (!editor) return
+
+        // While the user is actively selecting text, skip provisional DOM updates.
+        // Each word mutation would destroy the browser selection before the toolbar can appear.
+        if (isSelectingRef.current) return
 
         // Sin texto provisional → limpiar nodo y resetear contador de palabras vistas.
         // NOTA: `segments` NO está en los deps de este efecto a propósito.
@@ -805,13 +865,18 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         return () => el.removeEventListener('scroll', onScroll)
     }, [editor])
 
-    // Ctrl+J = scroll to end
+    // Ctrl+J = scroll to end  |  Escape = close popovers
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.ctrlKey && e.key === 'j') {
                 e.preventDefault()
                 autoScrollRef.current = true
                 containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight })
+            }
+            if (e.key === 'Escape') {
+                setSpeakerPopover(prev => prev.isOpen ? { ...prev, isOpen: false } : prev)
+                setSelectionToolbar(prev => prev.isActive ? { ...prev, isActive: false } : prev)
+                if (selectionToolbar.isActive) window.getSelection()?.removeAllRanges()
             }
         }
         window.addEventListener('keydown', handler)
@@ -853,10 +918,15 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                     return
                 }
                 const rect = range.getBoundingClientRect()
+                const centerX = rect.left + rect.width / 2
+                // Prefer showing below the selection; flip to above if too close to bottom
+                const spaceBelow = window.innerHeight - rect.bottom
+                const anchor: 'above' | 'below' = spaceBelow > 220 ? 'below' : 'above'
                 setSelectionToolbar({
                     isActive: true,
                     segmentIds: Array.from(ids),
-                    pos: { x: rect.left + rect.width / 2, y: rect.top },
+                    pos: { x: centerX, y: anchor === 'below' ? rect.bottom : rect.top },
+                    anchor,
                 })
             }, 120)
         }
@@ -905,10 +975,27 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         year: 'numeric', month: 'long', day: 'numeric'
     })
 
+    const handleEditorMouseDown = () => {
+        if (selectionResumeTimerRef.current) clearTimeout(selectionResumeTimerRef.current)
+        isSelectingRef.current = true
+    }
+    const handleEditorMouseUp = () => {
+        // Keep paused for 600ms — long enough for selectionchange to fire & toolbar to appear.
+        // After that, resume provisional updates.
+        if (selectionResumeTimerRef.current) clearTimeout(selectionResumeTimerRef.current)
+        selectionResumeTimerRef.current = setTimeout(() => {
+            isSelectingRef.current = false
+        }, 600)
+    }
+
     return (
         <div ref={containerRef} className="canvas-scroll-area">
         <div className="canvas-page-area">
-            <div className="canvas-document">
+            <div
+                className="canvas-document"
+                onMouseDown={handleEditorMouseDown}
+                onMouseUp={handleEditorMouseUp}
+            >
                 {/* Document header — mimics official PJ header */}
                 <div className="canvas-document__header">
                     <div className="canvas-document__title">
@@ -1008,54 +1095,169 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                     </>
                 )}
 
-                {/* Selection toolbar — assign selected segments to a speaker */}
-                {selectionToolbar.isActive && onReasignarSegmentos && hablantes.length > 0 && (
-                    <div
-                        className="fixed z-50 flex items-center gap-0.5 px-2 py-1.5 shadow-xl"
-                        style={{
-                            left: Math.max(8, Math.min(selectionToolbar.pos.x - 120, window.innerWidth - 280)),
-                            top: Math.max(8, selectionToolbar.pos.y - 48),
-                            background: 'var(--bg-surface)',
-                            border: '1px solid var(--border-subtle)',
-                            borderRadius: '4px',
-                            pointerEvents: 'auto',
-                        }}
-                    >
-                        <span
-                            className="text-[9px] font-bold uppercase tracking-widest pr-1.5 mr-1 shrink-0"
-                            style={{ color: 'var(--text-muted)', borderRight: '1px solid var(--border-subtle)' }}
-                        >
-                            Asignar a
-                        </span>
-                        {hablantes.map(h => (
-                            <button
-                                key={h.speaker_id}
-                                title={h.etiqueta + (h.nombre ? ` — ${h.nombre}` : '')}
-                                className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded hover:brightness-110 transition-all"
-                                style={{ background: `${h.color}18`, color: h.color, border: `1px solid ${h.color}40` }}
-                                onMouseDown={(e) => {
-                                    e.preventDefault() // Keep browser selection alive
-                                    const ids = [...selectionToolbar.segmentIds]
-                                    setSelectionToolbar({ isActive: false, segmentIds: [], pos: { x: 0, y: 0 } })
-                                    window.getSelection()?.removeAllRanges()
-                                    onReasignarSegmentos(ids, h.speaker_id)
-                                }}
-                            >
-                                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: h.color }} />
-                                {h.etiqueta.replace(/:$/, '')}
-                            </button>
-                        ))}
-                        <button
-                            className="ml-1 px-1.5 py-0.5 text-[10px] rounded hover:brightness-110"
-                            style={{ color: 'var(--text-muted)' }}
-                            onMouseDown={(e) => {
-                                e.preventDefault()
-                                setSelectionToolbar({ isActive: false, segmentIds: [], pos: { x: 0, y: 0 } })
-                                window.getSelection()?.removeAllRanges()
+                {/* Selection → Speaker assignment popover */}
+                {selectionToolbar.isActive && onReasignarSegmentos && (() => {
+                    // Compute which speakers are currently in the selection
+                    const selSegs = segments.filter(s => selectionToolbar.segmentIds.includes(s.id))
+                    const speakerIdsInSel = Array.from(new Set(selSegs.map(s => s.speaker_id)))
+                    const isSingleSpeaker = speakerIdsInSel.length === 1
+                    const canMerge = selectionToolbar.segmentIds.length > 1 && isSingleSpeaker
+
+                    return (
+                    <>
+                        {/* Transparent backdrop */}
+                        <div
+                            className="fixed inset-0 z-40"
+                            onMouseDown={() => setSelectionToolbar(s => ({ ...s, isActive: false }))}
+                        />
+                        <div
+                            className="fixed z-50 shadow-2xl"
+                            style={{
+                                left: Math.max(8, Math.min(
+                                    selectionToolbar.pos.x - 140,
+                                    window.innerWidth - 296,
+                                )),
+                                ...(selectionToolbar.anchor === 'below'
+                                    ? { top: selectionToolbar.pos.y + 10 }
+                                    : { bottom: window.innerHeight - selectionToolbar.pos.y + 10 }),
+                                width: 280,
+                                background: 'var(--bg-surface)',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: 8,
+                                overflow: 'hidden',
                             }}
-                        >✕</button>
-                    </div>
-                )}
+                        >
+                            {/* Header */}
+                            <div
+                                className="flex items-center justify-between px-3 py-2"
+                                style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}
+                            >
+                                <div className="flex flex-col gap-0.5">
+                                    <span className="text-[11px] font-bold" style={{ color: 'var(--text-primary)' }}>
+                                        {canMerge ? 'Fusionar segmentos' : 'Asignar hablante'}
+                                    </span>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                            {selectionToolbar.segmentIds.length} seg.
+                                        </span>
+                                        {/* Current speakers badges */}
+                                        {speakerIdsInSel.map(sid => {
+                                            const { etiqueta, color } = getSpeakerInfo(sid)
+                                            return (
+                                                <span
+                                                    key={sid}
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                                                    style={{ background: `${color}20`, color }}
+                                                >
+                                                    {etiqueta.replace(/:$/, '')}
+                                                </span>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+                                <button
+                                    className="text-[12px] w-5 h-5 flex items-center justify-center rounded hover:brightness-90 shrink-0"
+                                    style={{ color: 'var(--text-muted)' }}
+                                    onMouseDown={(e) => {
+                                        e.preventDefault()
+                                        setSelectionToolbar(s => ({ ...s, isActive: false }))
+                                        window.getSelection()?.removeAllRanges()
+                                    }}
+                                >✕</button>
+                            </div>
+
+                            {/* Fusionar — only when all selected segs share one speaker */}
+                            {canMerge && (
+                                <div style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                                    {(() => {
+                                        const { etiqueta, color } = getSpeakerInfo(speakerIdsInSel[0])
+                                        return (
+                                            <button
+                                                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
+                                                style={{ background: `${color}10` }}
+                                                onMouseEnter={e => (e.currentTarget.style.background = `${color}22`)}
+                                                onMouseLeave={e => (e.currentTarget.style.background = `${color}10`)}
+                                                onMouseDown={(e) => {
+                                                    e.preventDefault()
+                                                    const ids = [...selectionToolbar.segmentIds]
+                                                    setSelectionToolbar(s => ({ ...s, isActive: false }))
+                                                    window.getSelection()?.removeAllRanges()
+                                                    // Same speaker → merge (pass same speaker id triggers merge path)
+                                                    onReasignarSegmentos(ids, speakerIdsInSel[0])
+                                                }}
+                                            >
+                                                <span className="text-sm">⟹</span>
+                                                <div className="flex flex-col min-w-0">
+                                                    <span className="text-xs font-bold" style={{ color }}>
+                                                        Fusionar en un solo segmento
+                                                    </span>
+                                                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                                        {selectionToolbar.segmentIds.length} segmentos → 1 · {etiqueta.replace(/:$/, '')}
+                                                    </span>
+                                                </div>
+                                            </button>
+                                        )
+                                    })()}
+                                </div>
+                            )}
+
+                            {/* Speaker list */}
+                            {hablantes.length === 0 ? (
+                                <p className="px-3 py-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+                                    No hay hablantes registrados. Añade hablantes en el panel lateral.
+                                </p>
+                            ) : (
+                                <div className="py-1 max-h-56 overflow-y-auto">
+                                    <p className="px-3 pt-1 pb-0.5 text-[9px] font-bold uppercase tracking-widest"
+                                        style={{ color: 'var(--text-muted)' }}>
+                                        {canMerge ? 'O cambiar hablante a:' : 'Asignar todos a:'}
+                                    </p>
+                                    {hablantes.map(h => {
+                                        const isCurrentSpeaker = isSingleSpeaker && speakerIdsInSel[0] === h.speaker_id
+                                        return (
+                                            <button
+                                                key={h.speaker_id}
+                                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-all"
+                                                style={{
+                                                    background: isCurrentSpeaker ? `${h.color}18` : 'transparent',
+                                                    color: 'var(--text-primary)',
+                                                }}
+                                                onMouseEnter={e => (e.currentTarget.style.background = `${h.color}18`)}
+                                                onMouseLeave={e => (e.currentTarget.style.background = isCurrentSpeaker ? `${h.color}18` : 'transparent')}
+                                                onMouseDown={(e) => {
+                                                    e.preventDefault()
+                                                    const ids = [...selectionToolbar.segmentIds]
+                                                    setSelectionToolbar(s => ({ ...s, isActive: false }))
+                                                    window.getSelection()?.removeAllRanges()
+                                                    onReasignarSegmentos(ids, h.speaker_id)
+                                                }}
+                                            >
+                                                <span
+                                                    className="w-3 h-3 rounded-full shrink-0"
+                                                    style={{ background: h.color, boxShadow: `0 0 0 2px ${h.color}40` }}
+                                                />
+                                                <div className="flex flex-col min-w-0 flex-1">
+                                                    <span className="text-xs font-semibold truncate" style={{ color: h.color }}>
+                                                        {h.etiqueta.replace(/:$/, '')}
+                                                    </span>
+                                                    {h.nombre && (
+                                                        <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+                                                            {h.nombre}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {isCurrentSpeaker && (
+                                                    <span className="text-[10px] font-bold shrink-0" style={{ color: h.color }}>✓</span>
+                                                )}
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </>
+                    )
+                })()}
 
                 {/* Scroll indicator — shows when auto-scroll is off */}
                 {!autoScrollRef.current && segments.length > 3 && (

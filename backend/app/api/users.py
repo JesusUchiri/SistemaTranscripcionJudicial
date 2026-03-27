@@ -1,6 +1,10 @@
 """
 Endpoints de administración de usuarios (solo para admin).
 Permite ver estadísticas de uso (conteo de transcripciones, costos Deepgram + Claude).
+
+Fuente de costos:
+  1° Registros reales de la tabla `uso_api` (datos exactos de cada llamada API)
+  2° Estimación legacy a partir de duración y tokens (fallback para datos antiguos)
 """
 import uuid
 from typing import Annotated
@@ -13,44 +17,29 @@ from app.api.deps import require_role
 from app.database import get_db
 from app.models.acta import Acta
 from app.models.audiencia import Audiencia
+from app.models.uso_api import UsoApi
 from app.models.usuario import Usuario
 from app.schemas.users import UsuarioListResponse, UsuarioStats
+from app.services.cost_tracker import (
+    DEEPGRAM_RATES,
+    calcular_costo_claude,
+    calcular_costo_deepgram,
+    _get_claude_rates,
+    CLAUDE_DEFAULT_RATES,
+)
 
 router = APIRouter(prefix="/api/users", tags=["admin"])
 
-# ── Deepgram Nova-3 pricing ─────────────────────────────────────────
-# https://deepgram.com/pricing
-# Pre-recorded (batch): $0.0043 / min
-# Streaming:            $0.0059 / min
-DEEPGRAM_BATCH_USD_PER_MIN = 0.0043
-DEEPGRAM_STREAM_USD_PER_MIN = 0.0059
-
-# ── Claude pricing (USD per token) ─────────────────────────────────
-# Estimación conservadora: ~70% input / 30% output
-# claude-3-5-haiku: input $0.80/MTok, output $4.00/MTok  → ~$0.0000016/tok
-# claude-sonnet-4:  input $3.00/MTok, output $15.00/MTok → ~$0.0000066/tok
-CLAUDE_COST_PER_TOKEN: dict[str, float] = {
-    "claude-3-haiku":    0.00000028,  # $0.25/$1.25 per MTok input/output (Claude 3 Haiku)
-    "claude-3-5-haiku":  0.0000016,   # $0.80/$4.00 per MTok
-    "claude-haiku-4-5":  0.0000016,
-    "claude-3-5-sonnet": 0.0000066,   # $3/$15 per MTok
-    "claude-sonnet-4":   0.0000066,
-}
-CLAUDE_COST_DEFAULT = 0.00000028  # fallback (claude-3-haiku, el más barato)
-
-
-def _claude_cost_per_token(modelo: str | None) -> float:
-    if not modelo:
-        return CLAUDE_COST_DEFAULT
-    for key, rate in CLAUDE_COST_PER_TOKEN.items():
-        if key in modelo:
-            return rate
-    return CLAUDE_COST_DEFAULT
-
 
 async def _get_user_stats(db: AsyncSession, user_id: uuid.UUID) -> dict:
-    """Calcula transcripciones, duración y costos para un usuario."""
-    # Deepgram: sum duration from audiencias
+    """
+    Calcula transcripciones, duración y costos para un usuario.
+
+    Usa datos reales de la tabla `uso_api` cuando existen.
+    Para datos legacy (antes del sistema de tracking), estima usando
+    la duración de audio y tokens de actas.
+    """
+    # ── Conteo y duración total ──
     dg_query = select(
         func.count(Audiencia.id).label("count"),
         func.sum(Audiencia.audio_duration_seconds).label("total_duration"),
@@ -59,11 +48,72 @@ async def _get_user_stats(db: AsyncSession, user_id: uuid.UUID) -> dict:
     dg = dg_result.one()
 
     count = dg.count or 0
-    duration = float(dg.total_duration or 0)
-    # Assume streaming for audiencias without explicit fuente (conservative: streaming rate)
-    costo_deepgram = (duration / 60) * DEEPGRAM_STREAM_USD_PER_MIN
+    total_duration = float(dg.total_duration or 0)
 
-    # Claude: sum tokens from actas linked to this user's audiencias
+    # ── Costos REALES desde uso_api ──
+    # Buscar registros de uso vinculados a audiencias de este usuario
+    costo_query = select(
+        func.sum(
+            func.case(
+                (UsoApi.servicio.like("deepgram%"), UsoApi.costo_usd),
+                else_=0.0,
+            )
+        ).label("costo_dg"),
+        func.sum(
+            func.case(
+                (UsoApi.servicio.like("claude%"), UsoApi.costo_usd),
+                else_=0.0,
+            )
+        ).label("costo_cl"),
+        func.count(UsoApi.id).label("registros"),
+    ).where(
+        UsoApi.usuario_id == user_id,
+    )
+    costo_result = await db.execute(costo_query)
+    costos = costo_result.one()
+
+    # También buscar por audiencia_id (algunas llamadas se vinculan por audiencia)
+    costo_aud_query = select(
+        func.sum(
+            func.case(
+                (UsoApi.servicio.like("deepgram%"), UsoApi.costo_usd),
+                else_=0.0,
+            )
+        ).label("costo_dg"),
+        func.sum(
+            func.case(
+                (UsoApi.servicio.like("claude%"), UsoApi.costo_usd),
+                else_=0.0,
+            )
+        ).label("costo_cl"),
+        func.count(UsoApi.id).label("registros"),
+    ).where(
+        UsoApi.audiencia_id.in_(
+            select(Audiencia.id).where(Audiencia.created_by == user_id)
+        ),
+        UsoApi.usuario_id.is_(None),  # Solo los que no están ya contados por usuario
+    )
+    costo_aud_result = await db.execute(costo_aud_query)
+    costos_aud = costo_aud_result.one()
+
+    total_registros = (costos.registros or 0) + (costos_aud.registros or 0)
+    costo_deepgram_real = float(costos.costo_dg or 0) + float(costos_aud.costo_dg or 0)
+    costo_claude_real = float(costos.costo_cl or 0) + float(costos_aud.costo_cl or 0)
+
+    if total_registros > 0:
+        # Hay registros reales → usarlos
+        return {
+            "count": count,
+            "duration": total_duration,
+            "costo_deepgram": costo_deepgram_real,
+            "costo_claude": costo_claude_real,
+        }
+
+    # ── FALLBACK LEGACY: estimar a partir de duración y tokens ──
+    # (para datos creados antes del sistema de tracking)
+    costo_deepgram = calcular_costo_deepgram(total_duration, modo="streaming", diarize=True)
+
+    # Claude: tokens de actas (legacy)
     claude_query = select(
         func.sum(Acta.tokens_used).label("total_tokens"),
         Acta.modelo_llm,
@@ -77,14 +127,17 @@ async def _get_user_stats(db: AsyncSession, user_id: uuid.UUID) -> dict:
     claude_result = await db.execute(claude_query)
     claude_rows = claude_result.all()
 
-    costo_claude = sum(
-        float(row.total_tokens or 0) * _claude_cost_per_token(row.modelo_llm)
-        for row in claude_rows
-    )
+    costo_claude = 0.0
+    for row in claude_rows:
+        tokens = float(row.total_tokens or 0)
+        rates = _get_claude_rates(row.modelo_llm) if row.modelo_llm else CLAUDE_DEFAULT_RATES
+        # Estimación ponderada 70/30 para legacy
+        rate_ponderado = 0.70 * rates["input"] + 0.30 * rates["output"]
+        costo_claude += tokens * rate_ponderado
 
     return {
         "count": count,
-        "duration": duration,
+        "duration": total_duration,
         "costo_deepgram": costo_deepgram,
         "costo_claude": costo_claude,
     }

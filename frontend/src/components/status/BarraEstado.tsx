@@ -16,6 +16,7 @@ export default function BarraEstado() {
         connectionStatus,
         isTranscribing,
         segments,
+        claudeStreamingCost,
     } = useCanvasStore()
 
     // Confianza promedio
@@ -118,13 +119,22 @@ export default function BarraEstado() {
             {/* Espaciador */}
             <div className="flex-1" />
 
-            {/* Costo Deepgram (streaming: $0.0059/min) */}
+            {/* Costo Deepgram streaming — Tarifas: Nova-3 streaming $0.0059/min + diarización $0.0020/min */}
             {duracionEvaluar > 0 && (
                 <div className="flex items-center gap-2 shrink-0 bg-[#A68246]/10 px-2 py-1 rounded" style={{ color: '#C49640' }}>
                     <span className="opacity-80 hidden sm:inline">Deepgram:</span>
                     <span className="opacity-80 sm:hidden">DG:</span>
-                    <span className="font-mono font-bold">${((duracionEvaluar / 60) * 0.0059).toFixed(4)}</span>
+                    <span className="font-mono font-bold">${((duracionEvaluar / 60) * (0.0059 + 0.0020)).toFixed(4)}</span>
                     <span className="hidden md:inline opacity-70">({(duracionEvaluar / 60).toFixed(1)} min)</span>
+                </div>
+            )}
+
+            {/* Costo Claude streaming */}
+            {duracionEvaluar > 0 && (
+                <div className="flex items-center gap-2 shrink-0 bg-[#4F39F6]/10 px-2 py-1 rounded" style={{ color: '#6A56F6' }}>
+                    <span className="opacity-80 hidden sm:inline">Claude:</span>
+                    <span className="opacity-80 sm:hidden">AI:</span>
+                    <span className="font-mono font-bold">${claudeStreamingCost.toFixed(5)}</span>
                 </div>
             )}
 

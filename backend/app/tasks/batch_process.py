@@ -69,6 +69,23 @@ async def _batch_process_async(audiencia_id: str):
 
     async with async_session() as db:
         aid = uuid.UUID(audiencia_id)
+        
+        # Registrar costo si hubo palabras (indicando procesamiento exitoso)
+        if result.get("duration", 0.0) > 0:
+            try:
+                from app.services.cost_tracker import registrar_uso_deepgram
+                await registrar_uso_deepgram(
+                    db=db,
+                    servicio="deepgram_batch_alignment",
+                    modelo=settings.DEEPGRAM_MODEL,
+                    duracion_segundos=result.get("duration", 0.0),
+                    modo="batch",
+                    diarize=True,
+                    audiencia_id=aid,
+                )
+            except Exception as e:
+                logger.error(f"No se pudo registrar costo batch CELERY: {e}")
+
         stmt = select(Segmento).where(
             Segmento.audiencia_id == aid,
             Segmento.fuente == "streaming"

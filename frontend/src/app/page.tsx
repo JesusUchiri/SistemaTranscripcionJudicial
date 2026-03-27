@@ -298,7 +298,7 @@ export default function DashboardPage() {
                                     <table className="w-full text-sm min-w-[700px]">
                                         <thead>
                                             <tr style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}>
-                                                {['Expediente', 'Tipo de Audiencia', 'Juzgado', 'Fecha / Hora', 'Estado', 'Acciones'].map(h => (
+                                                {['Expediente', 'Tipo de Audiencia', 'Juzgado', 'Fecha / Hora', 'Estado', 'Costo API', 'Acciones'].map(h => (
                                                     <th
                                                         key={h}
                                                         className="text-left px-5 py-3 text-[10px] font-semibold uppercase tracking-wider"
@@ -352,6 +352,9 @@ export default function DashboardPage() {
                                                             >
                                                                 {estadoCfg.label}
                                                             </span>
+                                                        </td>
+                                                        <td className="px-5 py-3.5 text-xs font-mono font-medium" style={{ color: 'var(--text-muted)' }}>
+                                                            ${((a.costo_deepgram_usd || 0.0) + (a.costo_claude_usd || 0.0)).toFixed(4)}
                                                         </td>
                                                         <td className="px-5 py-3.5" onClick={e => e.stopPropagation()}>
                                                             <div className="flex items-center gap-2">
