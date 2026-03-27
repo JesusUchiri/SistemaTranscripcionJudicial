@@ -12,14 +12,14 @@ import os
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Form, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.config import settings
-from app.database import get_db
+from app.database import get_db, async_session
 from app.models.audiencia import Audiencia
 from app.models.segmento import Segmento
 from app.models.usuario import Usuario
@@ -363,14 +363,87 @@ async def subir_audio(
     }
 
 
-@router.post("/procesar", status_code=status.HTTP_200_OK)
+async def _run_transcripcion_background(
+    audiencia_id: uuid.UUID,
+    regions: list[dict],
+    filters_dict: dict,
+) -> None:
+    """
+    Ejecuta la transcripción completa en un hilo de background independiente del ciclo
+    HTTP. Usa su propia sesión de BD para que el commit no dependa de la request
+    original (que puede haber sido cancelada por un timeout de nginx).
+    """
+    async with async_session() as db:
+        try:
+            result_db = await db.execute(select(Audiencia).where(Audiencia.id == audiencia_id))
+            audiencia = result_db.scalar_one_or_none()
+            if audiencia is None:
+                logger.error(f"[bg_transcripcion] Audiencia {audiencia_id} no encontrada")
+                return
+
+            mime_type = _mime_from_path(audiencia.audio_path)
+            audiencia.estado = "en_curso"
+            await db.commit()
+
+            temp_files: list[str] = []
+            working_path = audiencia.audio_path
+
+            try:
+                # 1. Recortar regiones
+                if regions:
+                    from app.utils.audio_editor import trim_regions as _trim
+                    trimmed_path, was_trimmed = await _trim(working_path, regions)
+                    if was_trimmed:
+                        temp_files.append(trimmed_path)
+                        working_path = trimmed_path
+
+                # 2. Aplicar filtros
+                from app.utils.audio_editor import apply_filters as _filters
+                filtered_path, was_filtered = await _filters(working_path, filters_dict)
+                if was_filtered:
+                    temp_files.append(filtered_path)
+                    working_path = filtered_path
+
+                # 3. Comprimir + transcribir con Deepgram
+                result = await _transcribir_desde_disco(working_path, mime_type, db, audiencia)
+
+            except Exception as e:
+                logger.error(f"[bg_transcripcion] Error transcribiendo {audiencia_id}: {e}", exc_info=True)
+                audiencia.estado = "pendiente"  # volver a pendiente para que el usuario pueda reintentar
+                await db.commit()
+                return
+            finally:
+                for tmp in temp_files:
+                    if os.path.exists(tmp):
+                        os.unlink(tmp)
+
+            segments_data = result.get("segments", [])
+            await _guardar_segmentos(db, audiencia, segments_data)
+            audiencia.estado = "transcrita"
+            audiencia.audio_duration_seconds = result.get("duration", 0.0)
+            await db.commit()  # commit explícito — independiente del ciclo HTTP
+            logger.info(f"[bg_transcripcion] {audiencia_id} completado: {len(segments_data)} segmentos")
+
+        except Exception as e:
+            logger.error(f"[bg_transcripcion] Error fatal en {audiencia_id}: {e}", exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+
+@router.post("/procesar", status_code=status.HTTP_202_ACCEPTED)
 async def procesar_audio(
     req: ProcesarRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: Usuario = Depends(get_current_user),
 ):
     """
-    Paso 2 — Aplica edición (regiones + filtros) y transcribe con Deepgram.
+    Paso 2 — Lanza transcripción en background y devuelve 202 inmediatamente.
+
+    La transcripción puede tardar varios minutos para audios largos. El cliente
+    debe hacer polling a GET /api/audiencias/{id} y esperar estado='transcrita' o 'error'.
 
     - regions: lista de {start, end} en segundos; vacía = procesar todo el audio
     - filters: ruido, normalización, volumen, graves
@@ -389,61 +462,20 @@ async def procesar_audio(
     if not audiencia.audio_path or not os.path.exists(audiencia.audio_path):
         raise HTTPException(status_code=404, detail="No hay archivo de audio disponible")
 
-    mime_type = _mime_from_path(audiencia.audio_path)
-    audiencia.estado = "en_curso"
-    await db.flush()
+    regions_dicts = [{"start": r.start, "end": r.end} for r in req.regions]
+    filters_dict = req.filters.model_dump()
 
-    # Archivos temporales a limpiar al final
-    temp_files: list[str] = []
-    working_path = audiencia.audio_path
-
-    try:
-        # 1. Recortar regiones seleccionadas
-        if req.regions:
-            regions_dicts = [{"start": r.start, "end": r.end} for r in req.regions]
-            trimmed_path, was_trimmed = await trim_regions(working_path, regions_dicts)
-            if was_trimmed:
-                temp_files.append(trimmed_path)
-                working_path = trimmed_path
-
-        # 2. Aplicar filtros de audio
-        filters_dict = req.filters.model_dump()
-        filtered_path, was_filtered = await apply_filters(working_path, filters_dict)
-        if was_filtered:
-            temp_files.append(filtered_path)
-            working_path = filtered_path
-
-        # 3. Comprimir + transcribir con Deepgram
-        try:
-            result = await _transcribir_desde_disco(working_path, mime_type, db, audiencia)
-        except Exception as e:
-            audiencia.estado = "pendiente"
-            await db.flush()
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error en la transcripción: {str(e)}",
-            )
-
-    finally:
-        for tmp in temp_files:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
-
-    segments_data = result.get("segments", [])
-    unique_speakers = await _guardar_segmentos(db, audiencia, segments_data)
-    audiencia.estado = "transcrita"
-    audiencia.audio_duration_seconds = result.get("duration", 0.0)
-    await db.flush()
+    background_tasks.add_task(
+        _run_transcripcion_background,
+        req.audiencia_id,
+        regions_dicts,
+        filters_dict,
+    )
 
     return {
         "audiencia_id": str(audiencia.id),
-        "expediente": audiencia.expediente,
-        "estado": "transcrita",
-        "total_segmentos": len(segments_data),
-        "duracion_segundos": result.get("duration", 0.0),
-        "hablantes_detectados": len(unique_speakers),
-        "costo_total_usd": result.get("usd_cost", 0.0),
-        "mensaje": f"Audio procesado y transcrito. {len(segments_data)} segmentos con {len(unique_speakers)} hablantes.",
+        "estado": "en_curso",
+        "mensaje": "Transcripción iniciada. Consulta el estado con GET /api/audiencias/{id}",
     }
 
 

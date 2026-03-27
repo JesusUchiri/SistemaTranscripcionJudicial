@@ -62,6 +62,7 @@ class AudienciaResponse(BaseModel):
 
     costo_deepgram_usd: Optional[float] = 0.0
     costo_claude_usd: Optional[float] = 0.0
+    total_segmentos: Optional[int] = 0
 
     model_config = {"from_attributes": True}
 

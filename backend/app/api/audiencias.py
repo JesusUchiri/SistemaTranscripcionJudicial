@@ -154,6 +154,12 @@ async def obtener_audiencia(
     setattr(audiencia, "costo_deepgram_usd", dg.scalar() or 0.0)
     setattr(audiencia, "costo_claude_usd", cl.scalar() or 0.0)
 
+    # Conteo de segmentos (para polling del estado de transcripción)
+    seg_count = await db.execute(
+        select(func.count()).select_from(Segmento).where(Segmento.audiencia_id == audiencia_id)
+    )
+    setattr(audiencia, "total_segmentos", seg_count.scalar() or 0)
+
     return audiencia
 
 

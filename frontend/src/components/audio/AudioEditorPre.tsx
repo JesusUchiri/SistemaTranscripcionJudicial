@@ -308,18 +308,61 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
             setProgress(Math.round(p))
         }, 2000)
         try {
-            const { data } = await api.post(
+            // El endpoint devuelve 202 inmediatamente y procesa en background
+            await api.post(
                 '/api/transcripcion-audio/procesar',
                 {
                     audiencia_id: audienciaId,
                     regions: mode === 'regiones' ? regions.map(r => ({ start: r.start, end: r.end })) : [],
                     filters,
                 },
-                { timeout: 1_200_000 },
+                { timeout: 30_000 },
             )
+
+            // Polling: esperar hasta que estado sea 'transcrita' o 'error'
+            const MAX_WAIT_MS = 30 * 60 * 1000  // 30 min máximo
+            const POLL_INTERVAL = 4_000
+            const start = Date.now()
+
+            await new Promise<void>((resolve, reject) => {
+                const poll = setInterval(async () => {
+                    try {
+                        const { data: audiencia } = await api.get(`/api/audiencias/${audienciaId}`)
+                        if (audiencia.estado === 'transcrita') {
+                            clearInterval(poll)
+                            resolve()
+                        } else if (audiencia.estado === 'pendiente' && Date.now() - start > 10_000) {
+                            // Volvió a 'pendiente' tras >10s = error en background
+                            clearInterval(poll)
+                            reject(new Error('La transcripción falló. Intenta de nuevo.'))
+                        } else if (Date.now() - start > MAX_WAIT_MS) {
+                            clearInterval(poll)
+                            reject(new Error('Tiempo de espera agotado (30 min). Intenta de nuevo.'))
+                        }
+                    } catch (pollErr: any) {
+                        // Error de red — seguir intentando
+                        if (Date.now() - start > MAX_WAIT_MS) {
+                            clearInterval(poll)
+                            reject(pollErr)
+                        }
+                    }
+                }, POLL_INTERVAL)
+            })
+
+            // Obtener datos finales de la audiencia
+            const { data: final } = await api.get(`/api/audiencias/${audienciaId}`)
             clearInterval(iv)
             setProgress(100)
-            setTimeout(() => onProcesado(data), 400)
+            setTimeout(() => onProcesado({
+                audiencia_id: audienciaId,
+                expediente: final.expediente ?? '',
+                estado: final.estado,
+                total_segmentos: final.total_segmentos ?? 0,
+                duracion_segundos: final.audio_duration_seconds ?? 0,
+                hablantes_detectados: 0,
+                costo_total_usd: 0,
+                mensaje: `Audio transcrito. ${final.total_segmentos ?? 0} segmentos generados.`,
+            }), 400)
         } catch (err: any) {
             clearInterval(iv)
             setProcError(err.response?.data?.detail || err.message || 'Error al procesar.')
