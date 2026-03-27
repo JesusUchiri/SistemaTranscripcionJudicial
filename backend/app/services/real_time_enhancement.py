@@ -269,44 +269,52 @@ Responde SOLO con un JSON válido (sin markdown):
         self, text: str, speaker_id: str, context: str
     ) -> str:
         """Construye el prompt para Claude."""
+        # Detectar si el contexto previo termina en oración completa (.?!) para la regla de mayúsculas
+        ctx_strip = context.strip()
+        context_last_char = ctx_strip[-1] if ctx_strip else ""
+        es_nueva_oracion = context_last_char in ".?!" or not ctx_strip
+        if es_nueva_oracion:
+            regla_primera_letra = "MAYÚSCULA — el contexto termina en puntuación final o es inicio de audiencia."
+        else:
+            regla_primera_letra = (
+                f"MINÚSCULA OBLIGATORIA — el contexto termina en '{context_last_char}', "
+                "es continuación de oración. Aunque Deepgram haya enviado mayúscula, "
+                "FORZAR minúscula en la primera letra del texto."
+            )
+
         return f"""Eres un digitador judicial del Distrito Judicial de Cusco, Perú.
+Corrige el TEXTO CRUDO de Deepgram: ortografía, puntuación y mayúsculas. Nunca añadas ni inventes palabras.
 
-Tu tarea es corregir ortografía, puntuación y mayúsculas del TEXTO CRUDO de Deepgram.
-
-CONTEXTO PREVIO (solo para saber si el texto es continuación o frase nueva):
-{context if context else "Inicio de la audiencia"}
+CONTEXTO PREVIO:
+{ctx_strip if ctx_strip else "Inicio de la audiencia"}
 
 HABLANTE: {speaker_id}
 TEXTO CRUDO: {text}
 
-═══ REGLA 0 — ARTEFACTOS DE AUDIO (aplicar PRIMERO) ═══
-a) REPETICIÓN DOBLE de palabra (disfluencia) → elimina la copia extra:
-   "lo lo" → "lo" | "no no" → "no" | "la la parte" → "la parte"
+── PASO 1: ARTEFACTOS DE ASR ──────────────────────────────────────────
+• Repetición doble (disfluencia) → elimina la copia: "un un" → "un" | "a a" → "a"
+• Repetición triple o más (alucinación ASR) → [SEGMENTO INAUDIBLE]
+• Muletillas puras sin contenido (eeeeh, mmmm, aaaa) → elimínalas.
 
-b) REPETICIÓN TRIPLE O MÁS (alucinación del ASR) → [SEGMENTO INAUDIBLE]:
-   "Port Port Port Port" → [SEGMENTO INAUDIBLE]
-   Umbral: 3+ repeticiones consecutivas = usar [SEGMENTO INAUDIBLE].
+── PASO 2: PRIMERA LETRA ──────────────────────────────────────────────
+{regla_primera_letra}
 
-═══ REGLA 1 — MAYÚSCULAS ═══
-Primera letra:
-  • Contexto previo termina en . ? ! → mayúscula inicial (nueva oración)
-  • Contexto termina en , ; : o sin puntuación → minúscula (continuación)
-  • "Inicio de la audiencia" → mayúscula inicial
+── PASO 3: MAYÚSCULAS INTERNAS ────────────────────────────────────────
+• Solo en mayúscula: primera letra tras punto/pregunta/exclamación internos, y nombres propios
+  (personas, lugares, instituciones específicas: "Cusco", "Ministerio Público").
+• TODO lo demás en minúscula: "el juez", "la fiscal", "el código penal", "el imputado".
 
-Dentro del texto: mayúscula tras . ? ! internos; nombres propios; en duda → minúscula.
-NUNCA capitalizar sustantivos comunes, adjetivos genéricos, preposiciones ni conjunciones.
+── PASO 4: PUNTUACIÓN ─────────────────────────────────────────────────
+• Corrige o agrega comas, puntos, punto y coma, dos puntos.
+• ¿? y ¡! solo en oraciones claramente interrogativas o exclamativas completas.
+• Si el texto termina con idea completa → agregar punto final.
+• Si termina en coma, conjunción o frase incompleta → NO agregar punto.
 
-═══ REGLA 2 — PUNTUACIÓN ═══
-Agrega o corrige: , . ; : ¿? ¡!
-Si el texto termina con idea completa, agrega punto final.
+── PASO 5: CORRECCIÓN DE PALABRAS ─────────────────────────────────────
+• Corrige palabras mal reconocidas por el ASR.
+• PROHIBIDO: agregar palabras, completar ideas, parafrasear, resumir.
 
-═══ REGLA 3 — CORRECCIÓN 1:1 ═══
-Corrige palabras mal transcritas. PROHIBIDO: agregar palabras, completar oraciones, parafrasear.
-
-⚠️ OBLIGATORIO: Devuelve ÚNICAMENTE el texto corregido del TEXTO CRUDO de arriba.
-NO añadas encabezados, títulos, ni texto del contexto previo.
-NO escribas "Acta", "Expediente" ni nada que no esté en el TEXTO CRUDO.
-La salida debe ser UNA sola línea continua (sin saltos de línea internos).
+REGLA ABSOLUTA: Devuelve ÚNICAMENTE el texto corregido. Una sola línea continua, sin saltos de línea.
 
 TEXTO CORREGIDO:"""
 

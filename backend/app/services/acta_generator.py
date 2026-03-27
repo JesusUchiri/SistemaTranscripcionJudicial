@@ -71,7 +71,8 @@ Estructura HTML a generar (copia exactamente estas etiquetas, rellena los valore
 4. Lenguaje formal judicial en tercera persona. Corregir ortografía y puntuación. Eliminar muletillas (eeeh, mmm, este...) sin cambiar el sentido.
 5. Roles de hablante en MAYÚSCULAS seguidos de dos puntos: <strong>JUEZ:</strong>, <strong>FISCAL:</strong>, <strong>DEFENSA:</strong>, <strong>IMPUTADO:</strong>, etc.
 6. Usar los nombres reales de los hablantes si están disponibles en los datos de HABLANTES.
-7. NO inventar, suponer ni completar información ausente.
+7. Si un interviniente aparece como "INTERVINIENTE 1" o "SPEAKER_XX", intenta inferir su rol desde el contenido de sus intervenciones (quien dice "señor juez" dirige al JUEZ, quien presenta cargos es el FISCAL, quien defiende es la DEFENSA, etc.) y usar esa etiqueta de rol inferido.
+8. NO inventar, suponer ni completar información ausente.
 8. Fechas en formato: "veintiocho de febrero de dos mil veinticinco" (en letras) cuando aparezcan en el cuerpo textual, pero en los metadatos del encabezado usar el formato provisto.
 9. Segmentos inaudibles conservar como: [SEGMENTO INAUDIBLE]
 
@@ -133,8 +134,9 @@ Estructura HTML a generar:
 4. Distinguir entre JUEZ SUPERIOR - DIRECTOR DE DEBATES y los demás JUECES SUPERIORES.
 5. Lenguaje formal judicial. Corregir ortografía sin alterar el sentido jurídico.
 6. Roles en MAYÚSCULAS con dos puntos: <strong>JUEZ SUPERIOR - DIRECTOR DE DEBATES:</strong>
-7. NO inventar información ausente.
-8. Conservar [SEGMENTO INAUDIBLE] tal cual.
+7. Si un interviniente aparece como "INTERVINIENTE X" o "SPEAKER_XX", infiere su rol desde el contenido de sus intervenciones (expresiones como "señora presidenta", "con la venia de la sala", "en representación de la defensa", etc.) y usa la etiqueta de rol correspondiente.
+8. NO inventar información ausente.
+9. Conservar [SEGMENTO INAUDIBLE] tal cual.
 
 ## DATOS DE LA AUDIENCIA:
 {metadatos}
@@ -197,7 +199,24 @@ async def generar_acta(
     hablantes = result.scalars().all()
 
     # 4. Construir transcripción con etiquetas de hablante
+    # Mapeo de rol DB → etiqueta legible en español para el acta
+    _ROL_ETIQUETA = {
+        "juez":              "JUEZ",
+        "juez_director":     "JUEZ SUPERIOR DIRECTOR DE DEBATES",
+        "jueces_colegiado":  "JUEZ SUPERIOR",
+        "fiscal":            "FISCAL",
+        "defensa_imputado":  "DEFENSA",
+        "defensa_agraviado": "DEFENSA CIVIL",
+        "imputado":          "IMPUTADO",
+        "agraviado":         "AGRAVIADO",
+        "testigo":           "TESTIGO",
+        "perito":            "PERITO",
+    }
+
     hablante_map = {h.speaker_id: h for h in hablantes}
+    # Numerar hablantes para fallback legible cuando no tienen rol asignado
+    speaker_numero = {spk: f"INTERVINIENTE {i+1}" for i, spk in enumerate(dict.fromkeys(h.speaker_id for h in hablantes))}
+
     transcripcion_lines = []
     current_speaker = None
 
@@ -208,7 +227,23 @@ async def generar_acta(
         if seg.speaker_id != current_speaker:
             current_speaker = seg.speaker_id
             h = hablante_map.get(seg.speaker_id)
-            etiqueta = h.etiqueta if h else f"{seg.speaker_id.upper()}:"
+            if h:
+                etq = (h.etiqueta or "").strip()
+                # Usar etiqueta personalizada si no es el placeholder genérico "SPEAKER_XX:"
+                if etq and not etq.upper().startswith("SPEAKER_"):
+                    etiqueta = etq if etq.endswith(":") else f"{etq}:"
+                elif h.rol and h.rol != "otro":
+                    # Derivar desde el rol DB
+                    rol_label = _ROL_ETIQUETA.get(h.rol, h.rol.upper())
+                    nombre_part = f" ({h.nombre})" if h.nombre else ""
+                    etiqueta = f"{rol_label}{nombre_part}:"
+                else:
+                    # Fallback: numerar intervinientes en vez de mostrar "SPEAKER_00:"
+                    fallback = speaker_numero.get(seg.speaker_id, seg.speaker_id.upper())
+                    nombre_part = f" ({h.nombre})" if h.nombre else ""
+                    etiqueta = f"{fallback}{nombre_part}:"
+            else:
+                etiqueta = f"{seg.speaker_id.upper()}:"
             transcripcion_lines.append(f"\n{etiqueta}")
 
         transcripcion_lines.append(texto)
