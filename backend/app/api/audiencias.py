@@ -8,7 +8,7 @@ import uuid
 from datetime import date
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -394,10 +394,28 @@ async def obtener_audio(
     audiencia_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[Usuario, Depends(get_current_user)],
+    request: Request,
 ):
-    """Servir el archivo WAV grabado de la audiencia."""
+    """
+    Sirve el archivo de audio con soporte de Range requests (necesario para seeking en WaveSurfer).
+    Detecta el MIME type real por extensión para todos los formatos soportados.
+    """
     import os
-    from fastapi.responses import FileResponse
+    from fastapi.responses import StreamingResponse
+
+    _MIME_MAP = {
+        ".wav":  "audio/wav",
+        ".wave": "audio/wav",
+        ".mp3":  "audio/mpeg",
+        ".mp4":  "audio/mp4",
+        ".m4a":  "audio/mp4",
+        ".ogg":  "audio/ogg",
+        ".oga":  "audio/ogg",
+        ".webm": "audio/webm",
+        ".flac": "audio/flac",
+        ".aac":  "audio/aac",
+        ".opus": "audio/ogg; codecs=opus",
+    }
 
     result = await db.execute(
         select(Audiencia).where(Audiencia.id == audiencia_id)
@@ -411,20 +429,67 @@ async def obtener_audio(
     if not audiencia.audio_path or not os.path.exists(audiencia.audio_path):
         raise HTTPException(status_code=404, detail="Audio no disponible")
 
-    # WAV/WebM con solo cabecera vacío no se puede decodificar en el navegador
-    size = os.path.getsize(audiencia.audio_path)
-    if size <= 44:
-        raise HTTPException(
-            status_code=404,
-            detail="Audio no disponible (grabación vacía o sin datos)",
-        )
+    file_size = os.path.getsize(audiencia.audio_path)
+    if file_size < 8:
+        raise HTTPException(status_code=404, detail="Audio no disponible (archivo vacío)")
 
-    # Determinar tipo de media según extensión
     ext = os.path.splitext(audiencia.audio_path)[1].lower()
-    media_type = "audio/webm" if ext == ".webm" else "audio/wav"
+    media_type = _MIME_MAP.get(ext, "application/octet-stream")
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in audiencia.expediente)
+    content_disposition = f'inline; filename="{safe_name}{ext}"'
 
-    return FileResponse(
-        audiencia.audio_path,
+    # Soporte de Range requests para seeking en el navegador y WaveSurfer
+    range_header = request.headers.get("range")
+    if range_header:
+        try:
+            range_val = range_header.strip().replace("bytes=", "")
+            start_str, end_str = range_val.split("-")
+            start = int(start_str)
+            end = int(end_str) if end_str else file_size - 1
+            end = min(end, file_size - 1)
+            chunk_size = end - start + 1
+
+            def iterfile(path: str, s: int, length: int):
+                with open(path, "rb") as f:
+                    f.seek(s)
+                    remaining = length
+                    while remaining > 0:
+                        data = f.read(min(65536, remaining))
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+
+            return StreamingResponse(
+                iterfile(audiencia.audio_path, start, chunk_size),
+                status_code=206,
+                media_type=media_type,
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(chunk_size),
+                    "Content-Disposition": content_disposition,
+                },
+            )
+        except Exception:
+            pass  # Fallback a respuesta completa
+
+    # Respuesta completa (sin Range)
+    def iterfile_full(path: str):
+        with open(path, "rb") as f:
+            while True:
+                data = f.read(65536)
+                if not data:
+                    break
+                yield data
+
+    return StreamingResponse(
+        iterfile_full(audiencia.audio_path),
+        status_code=200,
         media_type=media_type,
-        filename=f"{audiencia.expediente}{ext}",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Content-Disposition": content_disposition,
+        },
     )
