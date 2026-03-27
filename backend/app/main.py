@@ -24,13 +24,15 @@ from datetime import date, time
 from app.services.auth_service import hash_password
 from app.ws.transcription_ws import transcription_websocket
 
+import os as _os
+_log_handlers: list = [logging.StreamHandler()]
+_log_file = _os.environ.get("LOG_FILE")
+if _log_file:
+    _log_handlers.append(logging.FileHandler(_log_file, mode="a", encoding="utf-8"))
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(r"C:\tmp\judiscribe_backend.log", mode="w", encoding="utf-8"),
-    ],
+    handlers=_log_handlers,
 )
 # Silenciar loggers muy verbosos
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)

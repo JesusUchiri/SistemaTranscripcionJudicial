@@ -26,6 +26,7 @@ class RealTimeEnhancementService:
 
     def __init__(self):
         self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self.max_context_segments = 5
         # El cliente AsyncAnthropic es stateless y seguro para compartir entre corrutinas.
         # NO almacenar conversation_context aquí — sería estado global compartido entre
         # TODAS las audiencias concurrentes. El contexto se pasa por parámetro (previous_segments)

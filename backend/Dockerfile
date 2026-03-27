@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb1-dev \
     pkg-config \
     libffi-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
