@@ -190,9 +190,13 @@ async def _transcribir_desde_disco(
 
 
 async def _stream_upload_to_disk(audio: UploadFile, audio_path: str) -> int:
-    """Guarda el archivo subido en disco en chunks. Devuelve el tamaño en bytes."""
+    """
+    Guarda el archivo subido en disco en chunks sin bloquear el event loop.
+    Las escrituras a disco usan asyncio.to_thread para no bloquear uvicorn.
+    """
+    import asyncio
     audio_size = 0
-    CHUNK = 8 * 1024 * 1024  # 8MB
+    CHUNK = 4 * 1024 * 1024  # 4MB — balance entre I/O overhead y memoria
     try:
         with open(audio_path, "wb") as f:
             while True:
@@ -205,7 +209,9 @@ async def _stream_upload_to_disk(audio: UploadFile, audio_path: str) -> int:
                         status_code=400,
                         detail="El archivo es demasiado grande. Máximo: 2GB",
                     )
-                f.write(chunk)
+                # Escritura no bloqueante: el event loop sigue libre mientras el
+                # kernel escribe en disco (crítico con uvicorn --workers 2)
+                await asyncio.to_thread(f.write, chunk)
     except HTTPException:
         if os.path.exists(audio_path):
             os.unlink(audio_path)
@@ -226,7 +232,7 @@ async def transcribir_audio(
 ):
     """Sube y transcribe en una sola operación (endpoint original)."""
     # max_part_size=2GB para superar el límite de 1MB de Starlette por defecto
-    form = await request.form(max_part_size=2 * 1024 * 1024 * 1024)
+    form = await request.form(max_part_size=10 * 1024 * 1024)  # 10MB en RAM, resto a temp file
     audio: UploadFile = form.get("audio")
     expediente: str = form.get("expediente", "")
     juzgado: str = form.get("juzgado", "")
@@ -341,7 +347,7 @@ async def subir_audio(
     pueda ajustar el audio antes de procesar.
     """
     # max_part_size=2GB para superar el límite de 1MB de Starlette por defecto
-    form = await request.form(max_part_size=2 * 1024 * 1024 * 1024)
+    form = await request.form(max_part_size=10 * 1024 * 1024)  # 10MB en RAM, resto a temp file
     audio: UploadFile = form.get("audio")
     expediente: str = form.get("expediente", "")
     juzgado: str = form.get("juzgado", "")

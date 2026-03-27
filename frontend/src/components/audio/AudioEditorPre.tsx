@@ -129,6 +129,7 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
         if (!waveRef.current) return
         let ws: any
         let dead = false
+        let readyTimeout: ReturnType<typeof setTimeout>
 
         const init = async () => {
             setLoading(true)
@@ -143,10 +144,12 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
 
             if (dead || !waveRef.current) return
 
-            // HTMLAudioElement con token en query param: streaming nativo del browser
-            // sin descargar ni decodificar el archivo completo (crítico para archivos >100MB)
+            // HTMLAudioElement con token en query param.
+            // preload='metadata': el browser descarga solo los primeros bytes para
+            // obtener la duración (range request ~64KB). Sin esto, WaveSurfer nunca
+            // recibe duration y el evento 'ready' puede no dispararse.
             const mediaEl = document.createElement('audio')
-            mediaEl.preload = 'none'
+            mediaEl.preload = 'metadata'
             mediaEl.src = `${audioUrl}?t=${encodeURIComponent(token)}`
             mediaElRef.current = mediaEl
 
@@ -183,13 +186,24 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
 
             ws.on('ready', () => {
                 if (dead) return
-                setDuration(ws.getDuration())
+                clearTimeout(readyTimeout)
+                setDuration(ws.getDuration() || duracion)
                 setReady(true)
                 setLoading(false)
             })
             ws.on('error', (err: any) => {
                 if (!dead) { setLoadError(`Error al decodificar: ${err?.message ?? String(err)}`); setLoading(false) }
             })
+
+            // Fallback: si 'ready' no llega en 8s (formato no soportado, ffprobe sin duración,
+            // etc.) mostrar el editor igual para que el usuario pueda transcribir
+            readyTimeout = setTimeout(() => {
+                if (!dead && wsRef.current) {
+                    setDuration(duracion || 0)
+                    setReady(true)
+                    setLoading(false)
+                }
+            }, 8000)
             ws.on('audioprocess', (t: number) => { if (!dead) setTime(t) })
             ws.on('seek', () => { if (!dead && wsRef.current) setTime(wsRef.current.getCurrentTime()) })
             ws.on('play', () => { if (!dead) setPlaying(true) })
@@ -219,9 +233,10 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
 
         }
 
-        init()
+        init().catch(() => {})
         return () => {
             dead = true
+            clearTimeout(readyTimeout)
             wsRef.current?.destroy()
             wsRef.current = null
             regPluginRef.current = null
