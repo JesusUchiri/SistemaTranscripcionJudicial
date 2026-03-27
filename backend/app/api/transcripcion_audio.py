@@ -12,7 +12,7 @@ import os
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Form, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -220,15 +220,22 @@ async def _stream_upload_to_disk(audio: UploadFile, audio_path: str) -> int:
 
 @router.post("", status_code=status.HTTP_200_OK)
 async def transcribir_audio(
-    audio: UploadFile = File(..., description="Archivo de audio a transcribir"),
-    expediente: str = Form(...),
-    juzgado: str = Form(...),
-    tipo_audiencia: str = Form("Audiencia de Audio Subido"),
-    instancia: str = Form("Primera Instancia"),
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: Usuario = Depends(get_current_user),
 ):
     """Sube y transcribe en una sola operación (endpoint original)."""
+    # max_part_size=2GB para superar el límite de 1MB de Starlette por defecto
+    form = await request.form(max_part_size=2 * 1024 * 1024 * 1024)
+    audio: UploadFile = form.get("audio")
+    expediente: str = form.get("expediente", "")
+    juzgado: str = form.get("juzgado", "")
+    tipo_audiencia: str = form.get("tipo_audiencia", "Audiencia de Audio Subido")
+    instancia: str = form.get("instancia", "Primera Instancia")
+
+    if not audio or not expediente or not juzgado:
+        raise HTTPException(status_code=400, detail="Campos requeridos: audio, expediente, juzgado")
+
     logger.info(f"Upload recibido: filename={audio.filename}, content_type={audio.content_type!r}")
     mime_type = _normalize_mime(audio.content_type, audio.filename)
     if mime_type not in ALLOWED_MIME_TYPES:
@@ -323,12 +330,8 @@ async def _optimizar_audio_background(audiencia_id: str, audio_path: str) -> Non
 
 @router.post("/subir", status_code=status.HTTP_200_OK)
 async def subir_audio(
+    request: Request,
     background_tasks: BackgroundTasks,
-    audio: UploadFile = File(..., description="Archivo de audio"),
-    expediente: str = Form(...),
-    juzgado: str = Form(...),
-    tipo_audiencia: str = Form("Audiencia de Audio Subido"),
-    instancia: str = Form("Primera Instancia"),
     db: AsyncSession = Depends(get_db),
     current_user: Usuario = Depends(get_current_user),
 ):
@@ -337,6 +340,17 @@ async def subir_audio(
     No transcribe: devuelve audiencia_id + duracion para que el usuario
     pueda ajustar el audio antes de procesar.
     """
+    # max_part_size=2GB para superar el límite de 1MB de Starlette por defecto
+    form = await request.form(max_part_size=2 * 1024 * 1024 * 1024)
+    audio: UploadFile = form.get("audio")
+    expediente: str = form.get("expediente", "")
+    juzgado: str = form.get("juzgado", "")
+    tipo_audiencia: str = form.get("tipo_audiencia", "Audiencia de Audio Subido")
+    instancia: str = form.get("instancia", "Primera Instancia")
+
+    if not audio or not expediente or not juzgado:
+        raise HTTPException(status_code=400, detail="Campos requeridos: audio, expediente, juzgado")
+
     logger.info(f"[subir] filename={audio.filename}, content_type={audio.content_type!r}")
     mime_type = _normalize_mime(audio.content_type, audio.filename)
     if mime_type not in ALLOWED_MIME_TYPES:
