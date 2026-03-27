@@ -210,7 +210,7 @@ export default function PaginaActa() {
 
     return (
         <AuthGuard>
-            <div className="min-h-screen flex flex-col bg-[var(--bg-primary)]">
+            <div className="h-screen flex flex-col bg-[var(--bg-primary)]">
 
                 {/* ── Header ──────────────────────────────────────────── */}
                 <header
