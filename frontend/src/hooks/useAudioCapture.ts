@@ -10,6 +10,8 @@ interface AudioCaptureOptions {
     onAudioChunk: (base64Data: string, sequence: number) => void
     sampleRate?: number
     chunkIntervalMs?: number
+    /** Multiplicador de ganancia de software (1 = sin boost, 15 = útil para audio de sistema/video) */
+    gainValue?: number
 }
 
 // Convierte Float32 PCM a Int16 PCM (linear16)
@@ -33,6 +35,7 @@ export function useAudioCapture({
     onAudioChunk,
     sampleRate = 16000,
     chunkIntervalMs = 250,
+    gainValue = 1,
 }: AudioCaptureOptions) {
     const [isCapturing, setIsCapturing] = useState(false)
     const [isPaused, setIsPaused] = useState(false)
@@ -41,12 +44,15 @@ export function useAudioCapture({
 
     const mediaStreamRef = useRef<MediaStream | null>(null)
     const audioContextRef = useRef<AudioContext | null>(null)
+    const gainNodeRef = useRef<GainNode | null>(null)
     const processorRef = useRef<ScriptProcessorNode | null>(null)
     const sequenceRef = useRef(0)
     // Buffer acumulador: recoge muestras hasta completar chunkIntervalMs
     const bufferRef = useRef<Float32Array[]>([])
     const samplesPerChunk = useRef(0)
     const samplesAccumRef = useRef(0)
+    // Nivel RMS del audio capturado (0-1) — actualizado en cada chunk
+    const [audioLevel, setAudioLevel] = useState(0)
 
     const listDevices = useCallback(async () => {
         try {
@@ -102,6 +108,12 @@ export function useAudioCapture({
                 bufferRef.current = []
 
                 const sourceNode = ctx.createMediaStreamSource(stream)
+
+                // GainNode para amplificar señales débiles (audio de sistema/video suele llegar a <5% RMS)
+                const gainNode = ctx.createGain()
+                gainNode.gain.value = gainValue
+                gainNodeRef.current = gainNode
+
                 // ScriptProcessorNode: funcional aunque marcado como deprecated.
                 // AudioWorklet requiere archivo JS separado — se migrará en sprint posterior.
                 const processor = ctx.createScriptProcessor(bufferSize, 1, 1)
@@ -126,18 +138,27 @@ export function useAudioCapture({
 
                         const base64 = float32ToInt16Base64(merged)
                         sequenceRef.current++
-                        // Log RMS to detect silence vs voice
+                        // Calcular RMS para el medidor de nivel
                         let sumSq = 0
                         for (let k = 0; k < merged.length; k++) sumSq += merged[k] * merged[k]
                         const rms = Math.sqrt(sumSq / merged.length)
-                        console.log('PCM chunk seq', sequenceRef.current, '— RMS:', rms.toFixed(4), base64.length, 'chars')
+                        setAudioLevel(rms)
+                        if (sequenceRef.current <= 5 || sequenceRef.current % 20 === 0) {
+                            console.log('PCM chunk seq', sequenceRef.current, '— RMS:', rms.toFixed(4), 'gain:', gainValue)
+                        }
                         onAudioChunk(base64, sequenceRef.current)
                     }
                 }
 
-                sourceNode.connect(processor)
-                // Conectar al destino es necesario para que onaudioprocess se dispare
-                processor.connect(ctx.destination)
+                // Pipeline: source → gain → processor → silentGain → destination
+                // El silentGain (gain=0) satisface el requisito de Chrome para que
+                // onaudioprocess se dispare, sin reproducir el audio capturado por los parlantes.
+                const silentGain = ctx.createGain()
+                silentGain.gain.value = 0
+                sourceNode.connect(gainNode)
+                gainNode.connect(processor)
+                processor.connect(silentGain)
+                silentGain.connect(ctx.destination)
 
                 setIsCapturing(true)
                 console.log('Audio capture started (PCM linear16 @', sampleRate, 'Hz)')
@@ -147,7 +168,7 @@ export function useAudioCapture({
                 console.error('Audio capture error:', msg, err)
             }
         },
-        [onAudioChunk, sampleRate, chunkIntervalMs]
+        [onAudioChunk, sampleRate, chunkIntervalMs, gainValue]
     )
 
     const pauseCapture = useCallback(() => {
@@ -166,15 +187,20 @@ export function useAudioCapture({
         const ctx = audioContextRef.current
         const stream = mediaStreamRef.current
         const processor = processorRef.current
-        if (!ctx || !stream || !processor) return
+        const gainNode = gainNodeRef.current
+        if (!ctx || !stream || !processor || !gainNode) return
 
         // Resume AudioContext if it was suspended
         if (ctx.state === 'suspended') ctx.resume()
 
-        // Reconnect processor → destination so onaudioprocess fires again
+        // Reconnect: source → gain → processor → silentGain → destination
         const sourceNode = ctx.createMediaStreamSource(stream)
-        sourceNode.connect(processor)
-        processor.connect(ctx.destination)
+        const silentGain = ctx.createGain()
+        silentGain.gain.value = 0
+        sourceNode.connect(gainNode)
+        gainNode.connect(processor)
+        processor.connect(silentGain)
+        silentGain.connect(ctx.destination)
         setIsPaused(false)
     }, [isCapturing, isPaused])
 
@@ -183,6 +209,7 @@ export function useAudioCapture({
             processorRef.current.disconnect()
             processorRef.current = null
         }
+        gainNodeRef.current = null
         if (audioContextRef.current) {
             audioContextRef.current.close()
             audioContextRef.current = null
@@ -196,11 +223,13 @@ export function useAudioCapture({
         sequenceRef.current = 0
         setIsCapturing(false)
         setIsPaused(false)
+        setAudioLevel(0)
     }, [])
 
     return {
         isCapturing,
         isPaused,
+        audioLevel,
         error,
         devices,
         listDevices,

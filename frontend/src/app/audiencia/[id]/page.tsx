@@ -100,8 +100,10 @@ export default function PaginaTranscripcion() {
         }
         removeVarDeteccion(det.key)
     }, [audiencia, audienciaId, removeVarDeteccion])
-    const { isCapturing, isPaused, startCapture, pauseCapture, resumeCapture, stopCapture, error: errorAudio } = useAudioCapture({
+    // Audio de sistema/video suele llegar a <5% de amplitud — requiere boost de ganancia
+    const { isCapturing, isPaused, audioLevel, startCapture, pauseCapture, resumeCapture, stopCapture, error: errorAudio } = useAudioCapture({
         onAudioChunk: sendAudio,
+        gainValue: fuenteAudio === 'system' ? 18 : 4,
     })
 
     const canvasRef = useRef<TranscriptionCanvasHandle>(null)
@@ -654,6 +656,26 @@ export default function PaginaTranscripcion() {
                                             <>
                                                 <span className="w-2 h-2 rounded-full animate-pulse shrink-0" style={{ background: 'var(--danger)' }} />
                                                 <span className="text-xs font-medium" style={{ color: 'var(--danger)' }}>Grabando</span>
+                                                {/* Medidor de nivel de audio — 5 barras */}
+                                                <div className="flex items-end gap-px ml-1" title={`Nivel de audio: ${(audioLevel * 100).toFixed(1)}%`}>
+                                                    {[0.04, 0.12, 0.22, 0.36, 0.55].map((threshold, i) => (
+                                                        <div
+                                                            key={i}
+                                                            style={{
+                                                                width: 3,
+                                                                height: 5 + i * 2,
+                                                                borderRadius: 1,
+                                                                background: audioLevel > threshold
+                                                                    ? (audioLevel > 0.7 ? '#ef4444' : audioLevel > 0.35 ? '#22c55e' : '#3b82f6')
+                                                                    : 'rgba(255,255,255,0.15)',
+                                                                transition: 'background 0.1s',
+                                                            }}
+                                                        />
+                                                    ))}
+                                                </div>
+                                                {audioLevel < 0.03 && isCapturing && (
+                                                    <span className="text-xs ml-1" style={{ color: '#F59E0B' }} title="Señal muy débil">⚠</span>
+                                                )}
                                             </>
                                         )}
                                     </div>
