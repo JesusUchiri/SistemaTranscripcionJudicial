@@ -42,7 +42,7 @@ export async function analyzeWordInContext(
     previousContext?: string
 ): Promise<WordAnalysisResult> {
     try {
-        const response = await api.post('/analysis/word', {
+        const response = await api.post('/api/analysis/word', {
             word,
             sentence,
             confidence,
@@ -70,7 +70,7 @@ export async function analyzePhraseContext(
     previousContext?: string
 ): Promise<PhraseAnalysisResult> {
     try {
-        const response = await api.post('/analysis/phrase', {
+        const response = await api.post('/api/analysis/phrase', {
             sentence,
             previous_context: previousContext,
         })

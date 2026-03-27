@@ -13,7 +13,7 @@ from app.services.text_prediction import (
     capitalize_proper_nouns,
 )
 
-router = APIRouter(prefix="/prediction", tags=["prediction"])
+router = APIRouter(prefix="/api/prediction", tags=["prediction"])
 
 
 class PredictionRequest(BaseModel):

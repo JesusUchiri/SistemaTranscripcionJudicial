@@ -7,7 +7,7 @@ from typing import Optional, List
 
 from app.services.context_analysis import get_context_service
 
-router = APIRouter(prefix="/analysis", tags=["analysis"])
+router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
 class WordAnalysisRequest(BaseModel):
