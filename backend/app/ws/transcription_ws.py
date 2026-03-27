@@ -89,14 +89,23 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
             await websocket.close(code=4403, reason="Sin permiso para esta audiencia")
             return
 
+    # ── Guard: una sola sesión activa por audiencia ──────────────────────────
+    # Si ya hay una sesión para esta audiencia, rechazar la nueva conexión.
+    # En uso judicial solo un digitador transcribe cada audiencia a la vez.
+    if audiencia_id in active_sessions:
+        logger.warning(f"Conexión rechazada — audiencia {audiencia_id} ya tiene sesión activa")
+        await websocket.close(code=4409, reason="Audiencia ya tiene una sesión de transcripción activa")
+        return
+
     logger.info(f"WebSocket connected for audiencia: {audiencia_id}")
 
-    # Audio recording setup — guarda formato WAV para que los navegadores lo lean fácilmente
+    # Audio recording: nombre único por sesión (evita colisión si hubiera dos intentos)
     audio_dir = settings.AUDIO_STORAGE_PATH
     os.makedirs(audio_dir, exist_ok=True)
-    audio_path = os.path.join(audio_dir, f"{audiencia_id}.wav")
-    
-    # Creamos un archivo wave de 1 canal, 16 bits (2 bytes), a 16000Hz (lo que envía Float32 to Int16)
+    session_short_id = str(uuid.uuid4())[:8]
+    audio_path = os.path.join(audio_dir, f"{audiencia_id}_{session_short_id}.wav")
+
+    # WAV: 1 canal, 16 bits, 16000 Hz (coincide con lo que envía el frontend)
     audio_file = wave.open(audio_path, "wb")
     audio_file.setnchannels(1)
     audio_file.setsampwidth(2)
@@ -390,22 +399,20 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         except Exception as db_err:
             logger.error(f"❌ Error CRÍTICO guardando segmento definitivo {segment_id}: {db_err}", exc_info=True)
 
-        # ── Paso 2: Eliminar segmentos intermedios (best-effort) ──
-        try:
-            async with async_session() as db:
-                for iid in intermediate_ids:
-                    try:
-                        result = await db.execute(
-                            select(Segmento).where(Segmento.id == uuid.UUID(iid))
-                        )
-                        seg = result.scalar_one_or_none()
-                        if seg:
-                            await db.delete(seg)
-                    except Exception:
-                        pass
-                await db.commit()
-        except Exception as cleanup_err:
-            logger.warning(f"⚠️ Error limpiando segmentos intermedios (no crítico): {cleanup_err}")
+        # ── Paso 2: Eliminar segmentos intermedios con bulk DELETE ──
+        # Usamos DELETE directo (sin ORM) para mayor robustez y atomicidad.
+        if intermediate_ids:
+            try:
+                from sqlalchemy import delete as sql_delete
+                uuids = [uuid.UUID(iid) for iid in intermediate_ids]
+                async with async_session() as db:
+                    await db.execute(
+                        sql_delete(Segmento).where(Segmento.id.in_(uuids))
+                    )
+                    await db.commit()
+                logger.info(f"🗑️ {len(intermediate_ids)} segmentos intermedios eliminados")
+            except Exception as cleanup_err:
+                logger.warning(f"⚠️ Error limpiando segmentos intermedios (no crítico): {cleanup_err}")
 
     def _trigger_consolidation():
         nonlocal segment_counter, consolidation_buffer
@@ -421,9 +428,12 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
             "intermediate_ids": list(consolidation_buffer["intermediate_ids"]),
         }
         
-        # Guardar counter y adelantarlo
-        current_counter = segment_counter
+        # Adelantar el counter PRIMERO y usar el valor nuevo para el consolidado.
+        # Si lo capturáramos antes del incremento, coincidiría con el último
+        # intermedio (que también usó ese valor), causando duplicados de 'orden'
+        # en la DB cuando el DELETE de intermedios falla.
         segment_counter += 1
+        current_counter = segment_counter
 
         # Limpiar buffer inmediatamente
         consolidation_buffer["segments"] = []

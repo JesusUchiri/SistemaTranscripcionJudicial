@@ -16,20 +16,23 @@ logger = logging.getLogger(__name__)
 
 # Configuración de engine según ambiente
 if settings.ENVIRONMENT == "production":
-    # Producción: usar QueuePool con timeouts más altos
+    # Producción con 2 workers uvicorn: cada worker tiene su propio pool.
+    # pool_size=15 × 2 workers = 30 conexiones máx → bien dentro del límite de PG (100).
+    # max_overflow=10 permite bursts cortos sin rechazar requests.
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,
-        pool_size=10,
-        max_overflow=5,
+        pool_size=15,
+        max_overflow=10,
         pool_pre_ping=True,
-        pool_recycle=3600,  # Reciclar conexiones cada hora
+        pool_recycle=1800,   # Reciclar conexiones cada 30 min (más conservador)
+        pool_timeout=30,     # Error si no hay conexión disponible en 30s
         connect_args={
-            "timeout": 30,  # Timeout de conexión: 30s
+            "timeout": 30,
             "command_timeout": 30,
         },
     )
-    logger.info("✅ Database engine creado en modo PRODUCCIÓN")
+    logger.info("✅ Database engine creado en modo PRODUCCIÓN (pool=15+10)")
 else:
     # Desarrollo: permitir debugging y reloads
     engine = create_async_engine(

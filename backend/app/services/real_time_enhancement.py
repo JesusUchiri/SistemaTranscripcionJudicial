@@ -26,8 +26,10 @@ class RealTimeEnhancementService:
 
     def __init__(self):
         self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self.conversation_context: List[Dict[str, str]] = []
-        self.max_context_segments = 25  # Mantener últimos 25 segmentos (~3-5 min de contexto)
+        # El cliente AsyncAnthropic es stateless y seguro para compartir entre corrutinas.
+        # NO almacenar conversation_context aquí — sería estado global compartido entre
+        # TODAS las audiencias concurrentes. El contexto se pasa por parámetro (previous_segments)
+        # desde cada sesión WebSocket, que lo mantiene localmente.
 
     async def is_sentence_complete(
         self,
@@ -180,7 +182,7 @@ Responde SOLO con un JSON válido (sin markdown):
             is_statement = enhanced_text.endswith(".")
 
             # Actualizar contexto de conversación
-            self._update_context(speaker_id, text, enhanced_text)
+            # Contexto manejado por el caller (sesión WS) via previous_segments
 
             # Calcular costo independientemente de la base de datos (para no fallar UI)
             from app.services.cost_tracker import calcular_costo_claude, registrar_uso_claude
@@ -307,26 +309,9 @@ La salida debe ser UNA sola línea continua (sin saltos de línea internos).
 
 TEXTO CORREGIDO:"""
 
-    def _update_context(self, speaker_id: str, original: str, enhanced: str):
-        """Actualiza el contexto de conversación."""
-        self.conversation_context.append(
-            {
-                "speaker_id": speaker_id,
-                "texto_ia": original,
-                "texto_mejorado": enhanced,
-            }
-        )
-
-        # Mantener solo los últimos N segmentos
-        if len(self.conversation_context) > self.max_context_segments:
-            self.conversation_context = self.conversation_context[
-                -self.max_context_segments :
-            ]
-
     def reset_context(self):
-        """Reinicia el contexto de conversación (inicio de nueva audiencia)."""
-        self.conversation_context = []
-        logger.info("Contexto de conversación reiniciado")
+        """No-op para compatibilidad. El contexto por-sesión vive en el WS handler."""
+        pass
 
 
 # Singleton instance
