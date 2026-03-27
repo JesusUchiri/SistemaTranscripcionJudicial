@@ -59,11 +59,15 @@ async def generar_acta_endpoint(
         )
         return acta
     except ValueError as e:
+        # 400: error de validación (ej: sin segmentos)
         raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        # 500: error interno (ej: fallo de Claude API)
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error generando acta: {str(e)}",
+            detail=f"Error inesperado generando acta: {str(e)}",
         )
 
 

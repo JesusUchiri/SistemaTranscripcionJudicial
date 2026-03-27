@@ -237,22 +237,29 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
     ]) or "No hay hablantes registrados"
 
     # 7. Seleccionar prompt por formato
+    # IMPORTANTE: NO usar str.format() porque la transcripción puede contener
+    # llaves { } (números de expediente, citas legales, etc.) → KeyError.
+    # Se reemplazan las variables conocidas con str.replace() en orden,
+    # insertando los valores más largos primero para evitar solapamientos.
     prompt_template = PROMPT_FORMATO_A if formato == "A" else PROMPT_FORMATO_B
-    prompt = prompt_template.format(
-        juzgado=audiencia.juzgado,
-        tipo_audiencia=audiencia.tipo_audiencia.upper(),
-        expediente=audiencia.expediente,
-        especialista=audiencia.especialista_audiencia or audiencia.especialista_causa or "No especificado",
-        imputado=audiencia.imputado_nombre or "No especificado",
-        agraviado=audiencia.agraviado_nombre or "No especificado",
-        delito=audiencia.delito or "No especificado",
-        hora_inicio=audiencia.hora_inicio.strftime('%H:%M') if audiencia.hora_inicio else "--:--",
-        hora_fin=audiencia.hora_fin.strftime('%H:%M') if audiencia.hora_fin else "--:--",
-        fecha=audiencia.fecha.strftime('%d de %B de %Y') if audiencia.fecha else "No especificada",
-        metadatos=metadatos,
-        hablantes=hablantes_text,
-        transcripcion=transcripcion,
-    )
+    substitutions = {
+        "{juzgado}":       audiencia.juzgado or "",
+        "{tipo_audiencia}": audiencia.tipo_audiencia.upper() if audiencia.tipo_audiencia else "",
+        "{expediente}":    audiencia.expediente or "",
+        "{especialista}":  audiencia.especialista_audiencia or audiencia.especialista_causa or "No especificado",
+        "{imputado}":      audiencia.imputado_nombre or "No especificado",
+        "{agraviado}":     audiencia.agraviado_nombre or "No especificado",
+        "{delito}":        audiencia.delito or "No especificado",
+        "{hora_inicio}":   audiencia.hora_inicio.strftime('%H:%M') if audiencia.hora_inicio else "--:--",
+        "{hora_fin}":      audiencia.hora_fin.strftime('%H:%M') if audiencia.hora_fin else "--:--",
+        "{fecha}":         audiencia.fecha.strftime('%d de %B de %Y') if audiencia.fecha else "No especificada",
+        "{metadatos}":     metadatos,
+        "{hablantes}":     hablantes_text,
+        "{transcripcion}": transcripcion,
+    }
+    prompt = prompt_template
+    for placeholder, value in substitutions.items():
+        prompt = prompt.replace(placeholder, value)
 
     # 8. Llamar a Claude Sonnet 4 (async para no bloquear el event loop)
     try:
@@ -290,8 +297,9 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         )
 
     except Exception as e:
-        logger.error(f"Error generando acta con Claude: {e}")
-        raise ValueError(f"Error al generar acta: {str(e)}")
+        logger.error(f"Error generando acta con Claude: {e}", exc_info=True)
+        # Re-raise como RuntimeError para que el endpoint lo devuelva como 500
+        raise RuntimeError(f"Error al generar acta con la IA: {str(e)}")
 
     # 9. Determinar versión
     result = await db.execute(

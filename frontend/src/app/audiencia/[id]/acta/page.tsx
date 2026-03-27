@@ -103,7 +103,7 @@ export default function PaginaActa() {
             await api.post(
                 `/api/audiencias/${audienciaId}/actas/generar`,
                 { formato },
-                { timeout: 120000 }, // 2 min para Claude
+                { timeout: 170000 }, // 170s — dentro del límite nginx (180s) para audiencias largas
             )
             await fetchAudienciaYActas()
             mostrarExito('Acta generada correctamente.')
