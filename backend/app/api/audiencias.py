@@ -9,7 +9,7 @@ from datetime import date
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -107,8 +107,8 @@ async def listar_audiencias(
         # Agrupar por audiencia y servicio
         costos_query = select(
             UsoApi.audiencia_id,
-            func.sum(func.case((UsoApi.servicio.like("deepgram%"), UsoApi.costo_usd), else_=0.0)).label("dg_cost"),
-            func.sum(func.case((UsoApi.servicio.like("claude%"), UsoApi.costo_usd), else_=0.0)).label("cl_cost")
+            func.sum(case((UsoApi.servicio.like("deepgram%"), UsoApi.costo_usd), else_=0.0)).label("dg_cost"),
+            func.sum(case((UsoApi.servicio.like("claude%"), UsoApi.costo_usd), else_=0.0)).label("cl_cost")
         ).where(
             UsoApi.audiencia_id.in_(audiencia_ids)
         ).group_by(UsoApi.audiencia_id)

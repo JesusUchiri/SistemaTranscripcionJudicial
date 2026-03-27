@@ -287,8 +287,43 @@ async def transcribir_audio(
 
 # ── Nuevo flujo 2 pasos ──────────────────────────────────────────────────────
 
+async def _optimizar_audio_background(audiencia_id: str, audio_path: str) -> None:
+    """
+    Convierte el archivo a FLAC optimizado en background, después de devolver la respuesta.
+    Actualiza audio_path en BD cuando termina. Si falla, el archivo original queda intacto.
+    """
+    orig_size_mb = os.path.getsize(audio_path) / 1024 / 1024
+    try:
+        optimized_path, was_optimized = await optimize_for_storage(audio_path)
+    except Exception as e:
+        logger.error(f"[bg_optimize] Error optimizando {audiencia_id}: {e}")
+        return
+
+    if not was_optimized:
+        return
+
+    async with async_session() as db:
+        try:
+            result = await db.execute(
+                select(Audiencia).where(Audiencia.id == uuid.UUID(audiencia_id))
+            )
+            audiencia = result.scalar_one_or_none()
+            if audiencia:
+                audiencia.audio_path = optimized_path
+                await db.commit()
+            opt_size_mb = os.path.getsize(optimized_path) / 1024 / 1024
+            logger.info(
+                f"[bg_optimize] {audiencia_id}: {orig_size_mb:.1f}MB → FLAC {opt_size_mb:.1f}MB"
+            )
+            if os.path.exists(audio_path):
+                os.unlink(audio_path)
+        except Exception as e:
+            logger.error(f"[bg_optimize] Error actualizando BD {audiencia_id}: {e}")
+
+
 @router.post("/subir", status_code=status.HTTP_200_OK)
 async def subir_audio(
+    background_tasks: BackgroundTasks,
     audio: UploadFile = File(..., description="Archivo de audio"),
     expediente: str = Form(...),
     juzgado: str = Form(...),
@@ -334,30 +369,21 @@ async def subir_audio(
     await db.flush()
     await db.refresh(audiencia)
 
-    # Obtener duración real con ffprobe
+    # Obtener duración real con ffprobe (rápido)
     duracion = await get_audio_duration(audio_path) or 0.0
     if duracion > 0:
         audiencia.audio_duration_seconds = duracion
         await db.flush()
 
-    # Optimizar para storage: convierte WAV/AIFF/vídeo a FLAC 22kHz lossless.
-    # Archivos ya comprimidos (MP3, AAC, OGG, FLAC) se mantienen sin tocar.
-    orig_size_mb = os.path.getsize(audio_path) / 1024 / 1024
-    optimized_path, was_optimized = await optimize_for_storage(audio_path)
-    if was_optimized:
-        # Actualizar la ruta en BD y eliminar el archivo original pesado
-        audiencia.audio_path = optimized_path
-        await db.flush()
-        os.unlink(audio_path)
-        opt_size_mb = os.path.getsize(optimized_path) / 1024 / 1024
-        logger.info(
-            f"[subir] Original eliminado ({orig_size_mb:.1f}MB). "
-            f"Almacenado como FLAC: {opt_size_mb:.1f}MB"
-        )
+    audiencia_id_str = str(audiencia.id)
+    logger.info(f"[subir] Audiencia creada: {audiencia_id_str}, duración: {duracion:.1f}s")
 
-    logger.info(f"[subir] Audiencia creada: {audiencia.id}, duración: {duracion:.1f}s")
+    # Optimización FLAC en background — puede tardar minutos para archivos WAV grandes.
+    # La respuesta se devuelve de inmediato; /procesar leerá la ruta actualizada de BD.
+    background_tasks.add_task(_optimizar_audio_background, audiencia_id_str, audio_path)
+
     return {
-        "audiencia_id": str(audiencia.id),
+        "audiencia_id": audiencia_id_str,
         "duracion_segundos": duracion,
         "mensaje": "Audio subido. Ajusta las regiones y filtros antes de procesar.",
     }
