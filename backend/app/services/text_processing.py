@@ -52,20 +52,20 @@ def preprocess_raw_transcript(text: str) -> str:
     if not text:
         return text
 
-    # 1. Repetición triple o más de la misma palabra → [SEGMENTO INAUDIBLE]
-    #    Sin \b final para que la coincidencia sea greedy en toda la secuencia.
-    #    Ej: "Port Port Port Port Port..." → "[SEGMENTO INAUDIBLE]"
+    # 1. Repetición triple o más de palabras LARGAS (≥4 chars) → alucinación ASR → [SEGMENTO INAUDIBLE]
+    #    Ej: "Port Port Port Port Port" → "[SEGMENTO INAUDIBLE]"
+    #    Palabras cortas ("en en en", "a a a") son disfluencias normales → se reducen (regla 2)
     text = re.sub(
-        r'\b(\w+)(?:\s+\1){2,}',
+        r'\b(\w{4,})(?:\s+\1){2,}',
         '[SEGMENTO INAUDIBLE]',
         text,
         flags=re.IGNORECASE,
     )
 
-    # 2. Repetición doble inmediata → una sola vez
-    #    Ej: "lo lo" → "lo", "no no hay" → "no hay", "a a la" → "a la"
+    # 2. Repetición doble o triple de cualquier palabra → una sola vez
+    #    Ej: "lo lo" → "lo", "en en en" → "en", "a a la" → "a la"
     text = re.sub(
-        r'\b(\w+)\s+\1\b',
+        r'\b(\w+)(?:\s+\1)+\b',
         r'\1',
         text,
         flags=re.IGNORECASE,

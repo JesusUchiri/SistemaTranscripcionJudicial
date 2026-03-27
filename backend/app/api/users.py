@@ -10,7 +10,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
@@ -54,13 +54,13 @@ async def _get_user_stats(db: AsyncSession, user_id: uuid.UUID) -> dict:
     # Buscar registros de uso vinculados a audiencias de este usuario
     costo_query = select(
         func.sum(
-            func.case(
+            case(
                 (UsoApi.servicio.like("deepgram%"), UsoApi.costo_usd),
                 else_=0.0,
             )
         ).label("costo_dg"),
         func.sum(
-            func.case(
+            case(
                 (UsoApi.servicio.like("claude%"), UsoApi.costo_usd),
                 else_=0.0,
             )
@@ -75,13 +75,13 @@ async def _get_user_stats(db: AsyncSession, user_id: uuid.UUID) -> dict:
     # También buscar por audiencia_id (algunas llamadas se vinculan por audiencia)
     costo_aud_query = select(
         func.sum(
-            func.case(
+            case(
                 (UsoApi.servicio.like("deepgram%"), UsoApi.costo_usd),
                 else_=0.0,
             )
         ).label("costo_dg"),
         func.sum(
-            func.case(
+            case(
                 (UsoApi.servicio.like("claude%"), UsoApi.costo_usd),
                 else_=0.0,
             )

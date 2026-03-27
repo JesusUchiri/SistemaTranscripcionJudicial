@@ -198,6 +198,23 @@ async def generar_acta(
     )
     hablantes = result.scalars().all()
 
+    # 3b. Deduplicar segmentos intermedios huérfanos.
+    # Si el DELETE de intermedios falló en una sesión anterior, pueden quedar en BD
+    # segmentos sin texto_mejorado que se solapan en tiempo con el segmento definitivo
+    # (que sí tiene texto_mejorado). Se eliminan antes de construir la transcripción.
+    final_segs_list = [s for s in segmentos if s.texto_mejorado is not None]
+
+    def _overlaps(a, b) -> bool:
+        return a.timestamp_inicio <= b.timestamp_fin and a.timestamp_fin >= b.timestamp_inicio
+
+    segmentos = [
+        s for s in segmentos
+        if s.texto_mejorado is not None or not any(
+            f.speaker_id == s.speaker_id and _overlaps(s, f)
+            for f in final_segs_list
+        )
+    ]
+
     # 4. Construir transcripción con etiquetas de hablante
     # Mapeo de rol DB → etiqueta legible en español para el acta
     _ROL_ETIQUETA = {
@@ -271,13 +288,8 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         for h in hablantes
     ]) or "No hay hablantes registrados"
 
-    # 7. Seleccionar prompt por formato
-    # IMPORTANTE: NO usar str.format() porque la transcripción puede contener
-    # llaves { } (números de expediente, citas legales, etc.) → KeyError.
-    # Se reemplazan las variables conocidas con str.replace() en orden,
-    # insertando los valores más largos primero para evitar solapamientos.
-    prompt_template = PROMPT_FORMATO_A if formato == "A" else PROMPT_FORMATO_B
-    substitutions = {
+    # 7. Construir sustituciones comunes (sin transcripcion, que varía por chunk)
+    base_substitutions = {
         "{juzgado}":       audiencia.juzgado or "",
         "{tipo_audiencia}": audiencia.tipo_audiencia.upper() if audiencia.tipo_audiencia else "",
         "{expediente}":    audiencia.expediente or "",
@@ -290,50 +302,165 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         "{fecha}":         audiencia.fecha.strftime('%d de %B de %Y') if audiencia.fecha else "No especificada",
         "{metadatos}":     metadatos,
         "{hablantes}":     hablantes_text,
-        "{transcripcion}": transcripcion,
     }
-    prompt = prompt_template
-    for placeholder, value in substitutions.items():
-        prompt = prompt.replace(placeholder, value)
 
-    # 8. Llamar a Claude Sonnet 4 (async para no bloquear el event loop)
+    def _apply_substitutions(template: str, transcript_chunk: str) -> str:
+        result = template.replace("{transcripcion}", transcript_chunk)
+        for placeholder, value in base_substitutions.items():
+            result = result.replace(placeholder, value)
+        return result
+
+    def _clean_llm_output(text: str) -> str:
+        text = text.strip()
+        text = re.sub(r'^```(?:html)?\s*\n?', '', text)
+        text = re.sub(r'\n?```\s*$', '', text)
+        return text.strip()
+
+    # 8. Llamar a Claude — con chunking para transcripciones largas
+    # Umbral: si la transcripción supera CHUNK_SIZE chars, generamos en partes
+    # para evitar que el output se corte al alcanzar el límite de 8192 tokens.
+    # ~80k chars ≈ 20k tokens de transcripción → con 8k tokens de salida cubre
+    # ~400 segmentos formalizados. Una audiencia de 2800 segs produce ~5 bloques.
+    CHUNK_SIZE = 80_000  # chars por chunk de transcripción
+
     try:
         client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        prompt_template = PROMPT_FORMATO_A if formato == "A" else PROMPT_FORMATO_B
+        total_in_tok = 0
+        total_out_tok = 0
 
-        message = await client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
-            max_tokens=8192,
-            temperature=0.1,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        if len(transcripcion) <= CHUNK_SIZE:
+            # ── Audiencia corta: una sola llamada ─────────────────────────────
+            prompt = _apply_substitutions(prompt_template, transcripcion)
+            message = await client.messages.create(
+                model=settings.ANTHROPIC_MODEL,
+                max_tokens=8192,
+                temperature=0.1,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            contenido_llm = _clean_llm_output(message.content[0].text)
+            total_in_tok = message.usage.input_tokens
+            total_out_tok = message.usage.output_tokens
 
-        contenido_llm = message.content[0].text.strip()
+        else:
+            # ── Audiencia larga: generación por bloques ────────────────────────
+            # Dividir la transcripción en bloques de CHUNK_SIZE chars,
+            # respetando los saltos de línea (no cortar a mitad de intervención).
+            chunks: list[str] = []
+            start = 0
+            while start < len(transcripcion):
+                end = min(start + CHUNK_SIZE, len(transcripcion))
+                if end < len(transcripcion):
+                    # Retroceder hasta el último salto de línea para no cortar intervenciones
+                    cut = transcripcion.rfind('\n', start, end)
+                    if cut > start:
+                        end = cut
+                chunks.append(transcripcion[start:end])
+                start = end
 
-        # Limpiar backticks de markdown que Claude a veces agrega (```html ... ```)
-        contenido_llm = re.sub(r'^```(?:html)?\s*\n?', '', contenido_llm)
-        contenido_llm = re.sub(r'\n?```\s*$', '', contenido_llm)
-        contenido_llm = contenido_llm.strip()
+            logger.info(f"Generando acta en {len(chunks)} bloques (transcripción={len(transcripcion)} chars)")
 
-        # Extraer datos reales de facturación de la respuesta API
-        in_tok = message.usage.input_tokens
-        out_tok = message.usage.output_tokens
-        tokens_used = in_tok + out_tok
+            html_parts: list[str] = []
+            expediente_label = audiencia.expediente or "la audiencia"
+
+            for i, chunk in enumerate(chunks):
+                is_first = (i == 0)
+                is_last = (i == len(chunks) - 1)
+
+                if is_first:
+                    # Bloque inicial: estructura completa del acta hasta el DESARROLLO
+                    # Instrucción extra: no generar DECISIÓN ni cierre si hay más bloques
+                    extra = (
+                        "\n\nIMPORTANTE — TRANSCRIPCIÓN PARCIAL: Esta es la primera parte de la transcripción. "
+                        "Hay más intervenciones que se procesarán a continuación. "
+                        "Genera la estructura completa del acta (encabezado, sujetos procesales, "
+                        "inicio del DESARROLLO DE LA AUDIENCIA) con las intervenciones de este bloque. "
+                        "NO generes la sección DECISIÓN ni el párrafo de cierre — esos vendrán al final."
+                        if not is_last else ""
+                    )
+                    prompt = _apply_substitutions(prompt_template, chunk) + extra
+
+                elif is_last:
+                    # Bloque final: solo intervenciones restantes + DECISIÓN + cierre
+                    prompt = (
+                        f"Estás redactando el ACTA DE AUDIENCIA del expediente {expediente_label}.\n"
+                        f"Continúa y FINALIZA la sección DESARROLLO DE LA AUDIENCIA con las siguientes intervenciones, "
+                        f"luego genera la sección DECISIÓN y el párrafo de cierre.\n\n"
+                        f"HABLANTES IDENTIFICADOS:\n{hablantes_text}\n\n"
+                        f"INTERVENCIONES FINALES:\n{chunk}\n\n"
+                        f"Responde ÚNICAMENTE con:\n"
+                        f"1. Los párrafos <p><strong>ROL:</strong> texto...</p> de las intervenciones adicionales.\n"
+                        f"2. La sección <h3>DECISIÓN:</h3> con su contenido.\n"
+                        f"3. El párrafo de cierre: <p>Con lo que concluyó la presente audiencia...</p>\n"
+                        f"Solo HTML válido: <h3>, <p>, <strong>, <em>, <ul>, <li>. Sin markdown."
+                    )
+
+                else:
+                    # Bloque intermedio: solo las intervenciones adicionales
+                    prompt = (
+                        f"Estás redactando el ACTA DE AUDIENCIA del expediente {expediente_label}.\n"
+                        f"Continúa la sección DESARROLLO DE LA AUDIENCIA con las siguientes intervenciones.\n\n"
+                        f"HABLANTES IDENTIFICADOS:\n{hablantes_text}\n\n"
+                        f"INTERVENCIONES ADICIONALES:\n{chunk}\n\n"
+                        f"Responde ÚNICAMENTE con los párrafos de intervenciones:\n"
+                        f"<p><strong>ROL:</strong> texto en lenguaje formal judicial de tercera persona...</p>\n"
+                        f"Sin encabezados, sin sección DECISIÓN, sin párrafo de cierre. Solo HTML: <p>, <strong>, <em>."
+                    )
+
+                msg = await client.messages.create(
+                    model=settings.ANTHROPIC_MODEL,
+                    max_tokens=8192,
+                    temperature=0.1,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                part = _clean_llm_output(msg.content[0].text)
+                html_parts.append(part)
+                total_in_tok += msg.usage.input_tokens
+                total_out_tok += msg.usage.output_tokens
+                logger.info(
+                    f"Bloque {i+1}/{len(chunks)}: in={msg.usage.input_tokens} out={msg.usage.output_tokens} tokens"
+                )
+
+            # Ensamblar: el primer bloque tiene la estructura completa;
+            # los bloques intermedios/final se insertan ANTES de cualquier
+            # sección DECISIÓN que el primer bloque haya podido generar.
+            if len(html_parts) == 1:
+                contenido_llm = html_parts[0]
+            else:
+                first_part = html_parts[0]
+                # Truncar el primer bloque antes de cualquier sección DECISIÓN
+                # para evitar duplicarla con la del último bloque.
+                decision_markers = ['<h3>DECISIÓN', '<h3>Decisión', '<h3>DECISION']
+                cut_pos = len(first_part)
+                for marker in decision_markers:
+                    idx = first_part.find(marker)
+                    if idx != -1 and idx < cut_pos:
+                        cut_pos = idx
+                first_truncated = first_part[:cut_pos].rstrip()
+
+                # Combinar: primer bloque truncado + bloques intermedios + bloque final
+                contenido_llm = first_truncated + "\n" + "\n".join(html_parts[1:])
+
+        tokens_used = total_in_tok + total_out_tok
         modelo_real = settings.ANTHROPIC_MODEL
+        logger.info(
+            f"Acta generada en {'1 llamada' if len(transcripcion) <= CHUNK_SIZE else f'{len(chunks)} bloques'}: "
+            f"in={total_in_tok} out={total_out_tok} tokens"
+        )
 
         # Registrar uso real en tabla uso_api
         await registrar_uso_claude(
             db,
             servicio="claude_acta",
             modelo=modelo_real,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
+            input_tokens=total_in_tok,
+            output_tokens=total_out_tok,
             audiencia_id=audiencia_id,
             usuario_id=usuario_id,
         )
 
     except Exception as e:
         logger.error(f"Error generando acta con Claude: {e}", exc_info=True)
-        # Re-raise como RuntimeError para que el endpoint lo devuelva como 500
         raise RuntimeError(f"Error al generar acta con la IA: {str(e)}")
 
     # 9. Determinar versión

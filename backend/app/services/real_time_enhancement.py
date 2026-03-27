@@ -157,7 +157,22 @@ Responde SOLO con un JSON válido (sin markdown):
             # Construir contexto de conversación
             context_text = self._build_context(previous_segments or [])
 
-            # Prompt para Claude
+            # Determinar caso de la primera letra ANTES de llamar a Claude
+            # (para poder corregir la salida si Claude lo ignora)
+            ctx_last = context_text.strip()[-1] if context_text.strip() else ""
+            es_continuacion = bool(ctx_last) and ctx_last not in ".?!"
+
+            # Cambio de hablante → siempre nueva oración (mayúscula), sin importar
+            # si el contexto anterior terminó en puntuación o no.
+            if es_continuacion and previous_segments:
+                last_speaker = previous_segments[-1].get("speaker_id", "")
+                if last_speaker and last_speaker != speaker_id:
+                    es_continuacion = False
+                    logger.info(f"[CTX] Speaker change {last_speaker}→{speaker_id}: forzando mayúscula")
+
+            logger.info(f"[CTX] ctx_last='{ctx_last}' es_continuacion={es_continuacion} ctx_tail='{context_text.strip()[-40:] if context_text.strip() else ''}'")
+
+            # Prompt para Claude (ya incluye pre-procesamiento de primera letra)
             prompt = self._build_enhancement_prompt(text, speaker_id, context_text)
 
             # Llamar a Claude con streaming desactivado para respuesta rápida
@@ -165,7 +180,7 @@ Responde SOLO con un JSON válido (sin markdown):
             message = await self.client.messages.create(
                 model=settings.ANTHROPIC_MODEL,
                 max_tokens=500,
-                temperature=0.3,  # Baja temperatura para consistencia
+                temperature=0.1,  # Temperatura más baja → menos creatividad, más consistencia
                 messages=[
                     {
                         "role": "user",
@@ -177,6 +192,22 @@ Responde SOLO con un JSON válido (sin markdown):
             # Extraer respuesta
             enhanced_text = message.content[0].text.strip()
             logger.info(f"🧠 [ENHANCE] Respuesta OK: in={message.usage.input_tokens} out={message.usage.output_tokens} tokens")
+
+            # ── POST-PROCESAMIENTO: aplicar caso de primera letra en Python ──────
+            # Claude a veces ignora la instrucción de minúscula aunque la reciba.
+            # Esta corrección es determinista y no depende del LLM.
+            if enhanced_text:
+                first_alpha_idx = next((i for i, c in enumerate(enhanced_text) if c.isalpha()), -1)
+                if first_alpha_idx >= 0:
+                    ch = enhanced_text[first_alpha_idx]
+                    forced = ch.lower() if es_continuacion else ch.upper()
+                    if ch != forced:
+                        enhanced_text = (
+                            enhanced_text[:first_alpha_idx]
+                            + forced
+                            + enhanced_text[first_alpha_idx + 1:]
+                        )
+                        logger.debug(f"[POST] Primera letra corregida: '{ch}'→'{forced}' (continuacion={es_continuacion})")
 
             # Analizar tipo de segmento con detección centralizada
             is_question = detect_question(enhanced_text)
@@ -269,18 +300,28 @@ Responde SOLO con un JSON válido (sin markdown):
         self, text: str, speaker_id: str, context: str
     ) -> str:
         """Construye el prompt para Claude."""
-        # Detectar si el contexto previo termina en oración completa (.?!) para la regla de mayúsculas
         ctx_strip = context.strip()
         context_last_char = ctx_strip[-1] if ctx_strip else ""
         es_nueva_oracion = context_last_char in ".?!" or not ctx_strip
+
+        # ── PRE-PROCESAMIENTO EN PYTHON (antes de que Claude lo vea) ──────────
+        # Si es continuación, forzar minúscula en primera letra directamente.
+        # Así Claude nunca necesita "decidir" sobre la primera letra.
+        if text:
+            # Saltar si empieza con ¿ o ¡ (no tienen forma en minúscula)
+            first_alpha_idx = next((i for i, c in enumerate(text) if c.isalpha()), -1)
+            if first_alpha_idx >= 0:
+                if es_nueva_oracion:
+                    # Asegurar que empieza con mayúscula
+                    text = text[:first_alpha_idx] + text[first_alpha_idx].upper() + text[first_alpha_idx + 1:]
+                else:
+                    # Forzar minúscula en continuación — definitivo, no se discute con Claude
+                    text = text[:first_alpha_idx] + text[first_alpha_idx].lower() + text[first_alpha_idx + 1:]
+
         if es_nueva_oracion:
-            regla_primera_letra = "MAYÚSCULA — el contexto termina en puntuación final o es inicio de audiencia."
+            regla_primera_letra = "MAYÚSCULA — la primera letra ya viene correcta, respétala."
         else:
-            regla_primera_letra = (
-                f"MINÚSCULA OBLIGATORIA — el contexto termina en '{context_last_char}', "
-                "es continuación de oración. Aunque Deepgram haya enviado mayúscula, "
-                "FORZAR minúscula en la primera letra del texto."
-            )
+            regla_primera_letra = "MINÚSCULA — es continuación de oración, la primera letra ya fue forzada a minúscula, respétala."
 
         return f"""Eres un digitador judicial del Distrito Judicial de Cusco, Perú.
 Corrige el TEXTO CRUDO de Deepgram: ortografía, puntuación y mayúsculas. Nunca añadas ni inventes palabras.
@@ -293,7 +334,7 @@ TEXTO CRUDO: {text}
 
 ── PASO 1: ARTEFACTOS DE ASR ──────────────────────────────────────────
 • Repetición doble (disfluencia) → elimina la copia: "un un" → "un" | "a a" → "a"
-• Repetición triple o más (alucinación ASR) → [SEGMENTO INAUDIBLE]
+• Repetición triple o más de palabra larga (≥4 chars, alucinación ASR) → [SEGMENTO INAUDIBLE]
 • Muletillas puras sin contenido (eeeeh, mmmm, aaaa) → elimínalas.
 
 ── PASO 2: PRIMERA LETRA ──────────────────────────────────────────────
@@ -301,17 +342,20 @@ TEXTO CRUDO: {text}
 
 ── PASO 3: MAYÚSCULAS INTERNAS ────────────────────────────────────────
 • Solo en mayúscula: primera letra tras punto/pregunta/exclamación internos, y nombres propios
-  (personas, lugares, instituciones específicas: "Cusco", "Ministerio Público").
+  (personas, lugares, instituciones: "Cusco", "Ministerio Público", "Poder Judicial").
 • TODO lo demás en minúscula: "el juez", "la fiscal", "el código penal", "el imputado".
 
 ── PASO 4: PUNTUACIÓN ─────────────────────────────────────────────────
 • Corrige o agrega comas, puntos, punto y coma, dos puntos.
-• ¿? y ¡! solo en oraciones claramente interrogativas o exclamativas completas.
+• ¿? solo en oraciones directamente interrogativas completas. NO agregar ¿ a verbos
+  en infinitivo ni afirmaciones aunque suenen cuestionadoras ("Argumentar que...", "Decir que...").
+• ¡! solo en exclamaciones claras.
 • Si el texto termina con idea completa → agregar punto final.
 • Si termina en coma, conjunción o frase incompleta → NO agregar punto.
+• Si termina en "..." (puntos suspensivos) → NO agregar punto adicional.
 
 ── PASO 5: CORRECCIÓN DE PALABRAS ─────────────────────────────────────
-• Corrige palabras mal reconocidas por el ASR.
+• Corrige palabras mal reconocidas por el ASR (errores fonéticos, homófonos, términos legales).
 • PROHIBIDO: agregar palabras, completar ideas, parafrasear, resumir.
 
 REGLA ABSOLUTA: Devuelve ÚNICAMENTE el texto corregido. Una sola línea continua, sin saltos de línea.

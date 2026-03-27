@@ -12,9 +12,9 @@ import { Acta, Audiencia } from '@/types'
 const PASOS_GENERACION = [
     'Recopilando segmentos de transcripción...',
     'Identificando hablantes y roles...',
-    'Enviando a Claude Sonnet 4...',
-    'Generando redacción judicial formal...',
-    'Aplicando formato oficial...',
+    'Enviando a Claude para redacción judicial...',
+    'Generando el acta (audiencias largas pueden tardar varios minutos)...',
+    'Ensamblando secciones y aplicando formato oficial...',
 ]
 
 export default function PaginaActa() {
@@ -96,14 +96,14 @@ export default function PaginaActa() {
         pasoIntervalRef.current = setInterval(() => {
             paso = Math.min(paso + 1, PASOS_GENERACION.length - 1)
             setPasoActual(paso)
-        }, 8000)
+        }, 30000) // 30s entre pasos — audiencias largas generan en múltiples bloques
 
         try {
             const formato = audiencia?.instancia === 'sala_apelaciones' ? 'B' : 'A'
             await api.post(
                 `/api/audiencias/${audienciaId}/actas/generar`,
                 { formato },
-                { timeout: 170000 }, // 170s — dentro del límite nginx (180s) para audiencias largas
+                { timeout: 600000 }, // 600s — audiencias largas se generan en múltiples bloques (hasta ~5 min)
             )
             await fetchAudienciaYActas()
             mostrarExito('Acta generada correctamente.')

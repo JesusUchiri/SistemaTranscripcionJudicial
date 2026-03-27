@@ -111,9 +111,8 @@ export default function TranscribirPage() {
     }
 
     const handleProcesado = useCallback((res: ProcesarResult) => {
-        setResult(res)
-        setPhase('done')
-    }, [])
+        router.push(`/audiencia/${res.audiencia_id}`)
+    }, [router])
 
     const reset = () => {
         setFile(null); setPhase('idle'); setError(null); setResult(null)

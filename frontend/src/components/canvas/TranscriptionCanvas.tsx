@@ -263,7 +263,6 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
 
     const prevSegmentCountRef = useRef(0)
     const prevSegmentIdsRef = useRef<string[]>([])
-    const prevHablantesJSONRef = useRef("")
     const prevProvisionalWordCountRef = useRef(0)
     const autoScrollRef = useRef(true)
     const containerRef = useRef<HTMLDivElement>(null)
@@ -517,24 +516,19 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         const currentIds = segments.map(s => s.id)
         const prevIds = prevSegmentIdsRef.current
 
-        // Detectar si cambió la info de los hablantes (roles, nombres, colores)
-        const currentHablantesJSON = JSON.stringify(hablantes)
-        const speakersUpdated = prevHablantesJSONRef.current !== "" && prevHablantesJSONRef.current !== currentHablantesJSON
-        prevHablantesJSONRef.current = currentHablantesJSON
-
         // Detectar si hubo un reemplazo (IDs cambiaron en el medio, no solo al final)
-        const isReplacement = (prevIds.length > 0 && (
+        const isReplacement = prevIds.length > 0 && (
             // Segmentos disminuyeron o IDs cambiaron (no solo append)
             segments.length < prevIds.length ||
             prevIds.some((id, i) => i < currentIds.length && currentIds[i] !== id)
-        )) || speakersUpdated
+        )
 
         if (isReplacement) {
             const missingIds = prevIds.filter(id => !currentIds.includes(id))
             const addedIds = currentIds.filter(id => !prevIds.includes(id))
 
             // Reemplazo localizado de segmentos en vivo de Claude
-            if (!speakersUpdated && missingIds.length > 0 && addedIds.length > 0) {
+            if (missingIds.length > 0 && addedIds.length > 0) {
                 let from = -1
                 let to = -1
                 
@@ -549,9 +543,26 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 })
 
                 if (from !== -1 && to !== -1) {
+                    // Extender 'from' para incluir el speakerNode que precede al rango de texto.
+                    // El speakerNode está a nivel bloque (doc → speakerNode, párrafo → texto),
+                    // por lo que no es accesible via $from.nodeBefore (que es inline).
+                    // Lo buscamos por su atributo firstSegmentId que apunta al primer segmento
+                    // del bloque de hablante — si coincide con el primer ID a reemplazar,
+                    // lo incluimos en el rango de eliminación.
+                    let adjustedFrom = from
+                    try {
+                        const firstReplacedId = missingIds[0]
+                        editor.state.doc.descendants((node, pos) => {
+                            if (node.type.name === 'speakerNode' && node.attrs.firstSegmentId === firstReplacedId) {
+                                adjustedFrom = pos
+                                return false  // stop traversal
+                            }
+                        })
+                    } catch {}
+
                     const htmlParts: string[] = []
                     const newAddedSegments = segments.filter(s => addedIds.includes(s.id))
-                    
+
                     newAddedSegments.forEach((seg) => {
                         const globalIdx = segments.indexOf(seg)
                         const prevSeg = globalIdx > 0 ? segments[globalIdx - 1] : null
@@ -569,7 +580,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                         const classes = ['segment-clickable', 'segment-confirming']
                         if (isEdited) classes.push('segment-edited')
 
-                        if (newSpeaker) {
+                        // Incluir speaker-label si hay cambio de speaker O si el nodo anterior fue eliminado
+                        if (newSpeaker || adjustedFrom < from) {
                             htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}" data-first-segment-id="${seg.id}"></speaker-label>`)
                         }
 
@@ -580,12 +592,26 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                     })
 
                     const html = htmlParts.join(' ')
-                    
-                    // Solo eliminar y reemplazar el pedazo modificado, no todo el documento!
+
+                    // Preservar posición de scroll antes de la mutación del documento
+                    const el = containerRef.current
+                    const currentScrollTop = el ? el.scrollTop : undefined
+
+                    // Eliminar rango extendido (texto + speaker-label precedente si existe)
                     editor.chain()
-                        .deleteRange({ from, to })
-                        .insertContentAt(from, html)
+                        .deleteRange({ from: adjustedFrom, to })
+                        .insertContentAt(adjustedFrom, html)
                         .run()
+
+                    // Restaurar scroll tras el reflow del DOM
+                    requestAnimationFrame(() => requestAnimationFrame(() => {
+                        if (!el || currentScrollTop === undefined) return
+                        if (autoScrollRef.current) {
+                            el.scrollTop = el.scrollHeight
+                        } else {
+                            el.scrollTop = currentScrollTop
+                        }
+                    }))
 
                     prevSegmentCountRef.current = segments.length
                     prevSegmentIdsRef.current = currentIds
@@ -684,7 +710,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
             if (!isBulkLoad) classes.push('segment-confirming')
 
             if (newSpeaker) {
-                htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}"></speaker-label>`)
+                htmlParts.push(`<speaker-label speakerId="${seg.speaker_id}" label="${etiqueta}" color="${color}" data-first-segment-id="${seg.id}"></speaker-label>`)
             }
 
             const segmentHtml = renderSegmentWords(texto, seg.palabras_json, seg.id)
