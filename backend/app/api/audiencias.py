@@ -389,12 +389,35 @@ async def merge_segmentos(
 
 # ── Audio de la audiencia ────────────────────────────────
 
+async def _get_user_header_or_query(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    t: Optional[str] = None,
+) -> Usuario:
+    """Auth que acepta Bearer header O query param ?t= (necesario para HTMLAudioElement)."""
+    from app.services.auth_service import decode_token, get_user_by_id
+    from fastapi.security.utils import get_authorization_scheme_param
+    raw = request.headers.get("Authorization", "")
+    _, token = get_authorization_scheme_param(raw)
+    if not token and t:
+        token = t
+    if not token:
+        raise HTTPException(status_code=401, detail="No autenticado")
+    token_data = decode_token(token)
+    if not token_data or not token_data.user_id:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    user = await get_user_by_id(db, token_data.user_id)
+    if not user or not user.activo:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado o inactivo")
+    return user
+
+
 @router.get("/{audiencia_id}/audio")
 async def obtener_audio(
     audiencia_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[Usuario, Depends(get_current_user)],
     request: Request,
+    current_user: Annotated[Usuario, Depends(_get_user_header_or_query)],
 ):
     """
     Sirve el archivo de audio con soporte de Range requests (necesario para seeking en WaveSurfer).

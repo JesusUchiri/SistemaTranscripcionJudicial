@@ -95,7 +95,7 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
     const waveRef = useRef<HTMLDivElement>(null)
     const wsRef = useRef<any>(null)
     const regPluginRef = useRef<any>(null)
-    const blobUrlRef = useRef<string | null>(null)
+    const mediaElRef = useRef<HTMLAudioElement | null>(null)
     const activeRegionRef = useRef<any>(null)
 
     const [ready, setReady] = useState(false)
@@ -134,21 +134,7 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
             setLoading(true)
             setLoadError(null)
 
-            const token = localStorage.getItem('access_token')
-            const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
-
-            let blobUrl: string
-            try {
-                const res = await fetch(audioUrl, { headers })
-                if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                const blob = await res.blob()
-                if (blob.size <= 100) throw new Error('Audio vacío o no disponible')
-                blobUrl = URL.createObjectURL(blob)
-                blobUrlRef.current = blobUrl
-            } catch (e: any) {
-                if (!dead) { setLoadError(`No se pudo cargar: ${e.message}`); setLoading(false) }
-                return
-            }
+            const token = localStorage.getItem('access_token') ?? ''
 
             const { default: WaveSurfer } = await import('wavesurfer.js')
             const { default: Regions } = await import('wavesurfer.js/dist/plugins/regions.esm.js')
@@ -156,6 +142,13 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
             const { default: Zoom } = await import('wavesurfer.js/dist/plugins/zoom.esm.js')
 
             if (dead || !waveRef.current) return
+
+            // HTMLAudioElement con token en query param: streaming nativo del browser
+            // sin descargar ni decodificar el archivo completo (crítico para archivos >100MB)
+            const mediaEl = document.createElement('audio')
+            mediaEl.preload = 'none'
+            mediaEl.src = `${audioUrl}?t=${encodeURIComponent(token)}`
+            mediaElRef.current = mediaEl
 
             const regPlugin = Regions.create()
             regPluginRef.current = regPlugin
@@ -169,9 +162,12 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
                 barWidth: 2, barGap: 1, barRadius: 3,
                 height: 130,
                 normalize: true,
-                autoScroll: true,       // sigue el cursor durante reproducción
-                autoCenter: true,       // centra el cursor al reproducir
-                hideScrollbar: false,   // muestra el scrollbar horizontal nativo
+                autoScroll: true,
+                autoCenter: true,
+                hideScrollbar: false,
+                media: mediaEl,
+                peaks: [new Float32Array(2000).fill(0.5)],
+                duration: duracion || undefined,
                 plugins: [
                     regPlugin,
                     Timeline.create({
@@ -221,7 +217,6 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
                 r.play()
             })
 
-            ws.load(blobUrl)
         }
 
         init()
@@ -230,7 +225,7 @@ export default function AudioEditorPre({ audienciaId, duracion, filename, onProc
             wsRef.current?.destroy()
             wsRef.current = null
             regPluginRef.current = null
-            if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null }
+            if (mediaElRef.current) { mediaElRef.current.src = ''; mediaElRef.current = null }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [audioUrl])
