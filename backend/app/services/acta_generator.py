@@ -317,11 +317,13 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         return text.strip()
 
     # 8. Llamar a Claude — con chunking para transcripciones largas
-    # Umbral: si la transcripción supera CHUNK_SIZE chars, generamos en partes
-    # para evitar que el output se corte al alcanzar el límite de 8192 tokens.
-    # ~80k chars ≈ 20k tokens de transcripción → con 8k tokens de salida cubre
-    # ~400 segmentos formalizados. Una audiencia de 2800 segs produce ~5 bloques.
-    CHUNK_SIZE = 80_000  # chars por chunk de transcripción
+    # Umbral: si la transcripción supera CHUNK_SIZE chars, generamos en partes.
+    # Con Sonnet (8192 tokens de salida) y ~20k chars por chunk:
+    #   ~20k chars ≈ 5k tokens entrada → output ≈ 4-6k tokens → cabe holgado.
+    # Una audiencia de 2800 segs (~150k chars) produce ~8 bloques.
+    CHUNK_SIZE = 20_000   # chars por chunk de transcripción
+    ACTA_MODEL = settings.ANTHROPIC_MODEL_ACTA
+    ACTA_MAX_TOKENS = 8192
 
     try:
         client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -333,11 +335,16 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
             # ── Audiencia corta: una sola llamada ─────────────────────────────
             prompt = _apply_substitutions(prompt_template, transcripcion)
             message = await client.messages.create(
-                model=settings.ANTHROPIC_MODEL,
-                max_tokens=4096,
+                model=ACTA_MODEL,
+                max_tokens=ACTA_MAX_TOKENS,
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
+            if message.stop_reason == "max_tokens":
+                logger.warning(
+                    f"Acta truncada por límite de tokens (stop_reason=max_tokens). "
+                    f"Transcripción={len(transcripcion)} chars. Considera reducir CHUNK_SIZE."
+                )
             contenido_llm = _clean_llm_output(message.content[0].text)
             total_in_tok = message.usage.input_tokens
             total_out_tok = message.usage.output_tokens
@@ -408,17 +415,22 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
                     )
 
                 msg = await client.messages.create(
-                    model=settings.ANTHROPIC_MODEL,
-                    max_tokens=4096,
+                    model=ACTA_MODEL,
+                    max_tokens=ACTA_MAX_TOKENS,
                     temperature=0.1,
                     messages=[{"role": "user", "content": prompt}],
                 )
+                if msg.stop_reason == "max_tokens":
+                    logger.warning(
+                        f"Bloque {i+1}/{len(chunks)} truncado por límite de tokens. "
+                        f"Chunk={len(chunk)} chars. Considera reducir CHUNK_SIZE."
+                    )
                 part = _clean_llm_output(msg.content[0].text)
                 html_parts.append(part)
                 total_in_tok += msg.usage.input_tokens
                 total_out_tok += msg.usage.output_tokens
                 logger.info(
-                    f"Bloque {i+1}/{len(chunks)}: in={msg.usage.input_tokens} out={msg.usage.output_tokens} tokens"
+                    f"Bloque {i+1}/{len(chunks)}: in={msg.usage.input_tokens} out={msg.usage.output_tokens} tokens, stop={msg.stop_reason}"
                 )
 
             # Ensamblar: el primer bloque tiene la estructura completa;
@@ -442,7 +454,7 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
                 contenido_llm = first_truncated + "\n" + "\n".join(html_parts[1:])
 
         tokens_used = total_in_tok + total_out_tok
-        modelo_real = settings.ANTHROPIC_MODEL
+        modelo_real = ACTA_MODEL
         logger.info(
             f"Acta generada en {'1 llamada' if len(transcripcion) <= CHUNK_SIZE else f'{len(chunks)} bloques'}: "
             f"in={total_in_tok} out={total_out_tok} tokens"

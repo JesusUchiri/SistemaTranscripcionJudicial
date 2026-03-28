@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # ── Anthropic ────────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+    # Modelo dedicado para generación de actas — requiere mayor ventana de salida
+    # (Sonnet: 8192 tokens vs Haiku: 4096). Se puede sobrescribir en .env.
+    ANTHROPIC_MODEL_ACTA: str = "claude-sonnet-4-6"
 
     # ── HuggingFace ──────────────────────────────────────
     HF_TOKEN: str = ""
