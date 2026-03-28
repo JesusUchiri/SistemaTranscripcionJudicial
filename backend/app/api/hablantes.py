@@ -6,6 +6,7 @@ El digitador asigna roles judiciales (juez, fiscal, defensa, etc.).
 """
 import json
 import logging
+import traceback
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -86,8 +87,6 @@ async def crear_hablante(
     """Crea un nuevo hablante (o lo detecta automáticamente vía WebSocket).
     Si el speaker_id ya existe, retorna el existente sin error (upsert).
     """
-    import logging as _logging, traceback as _tb
-    _log = _logging.getLogger(__name__)
     try:
         # Verificar si ya existe este speaker_id para esta audiencia
         existente_result = await db.execute(
@@ -129,7 +128,7 @@ async def crear_hablante(
     except HTTPException:
         raise
     except Exception as e:
-        _log.error(f"[POST /hablantes] {type(e).__name__}: {e}\n{_tb.format_exc()}")
+        _log.error(f"[POST /hablantes] {type(e).__name__}: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 
@@ -142,9 +141,6 @@ async def actualizar_hablante(
     _usuario: Usuario = Depends(get_current_user),
 ):
     """Actualiza un hablante — usado para asignar rol judicial al speaker_id."""
-    import logging
-    logger = logging.getLogger(__name__)
-
     try:
         resultado = await db.execute(
             select(Hablante).where(
@@ -156,7 +152,7 @@ async def actualizar_hablante(
         if not hablante:
             raise HTTPException(status_code=404, detail="Hablante no encontrado")
 
-        logger.warning(f"[HABLANTE PUT] antes: rol={hablante.rol}, datos.rol={datos.rol}, datos.nombre={datos.nombre}")
+        _log.debug(f"[HABLANTE PUT] antes: rol={hablante.rol}, datos.rol={datos.rol}")
 
         # Actualizar campos proporcionados
         if datos.rol is not None:
@@ -179,15 +175,14 @@ async def actualizar_hablante(
         await db.commit()
         await db.refresh(hablante)
 
-        logger.warning(f"[HABLANTE PUT] después: rol={hablante.rol}, etiqueta={hablante.etiqueta}")
+        _log.debug(f"[HABLANTE PUT] después: rol={hablante.rol}, etiqueta={hablante.etiqueta}")
         return hablante
 
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        logger.error(f"[HABLANTE PUT] ERROR: {type(e).__name__}: {e}")
-        logger.error(traceback.format_exc())
+        _log.error(f"[HABLANTE PUT] ERROR: {type(e).__name__}: {e}")
+        _log.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error interno: {type(e).__name__}: {str(e)}")
 
 

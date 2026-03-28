@@ -63,12 +63,10 @@ export function useDeepgramSocket(audienciaId: string) {
             setError(null)
             setConnectionStatus('connected')
             reconnectAttemptsRef.current = 0
-            console.log('WebSocket connected')
         }
 
         ws.onmessage = (event) => {
             try {
-                console.log('WS msg from backend:', event.data.substring(0, 120))
                 const data = JSON.parse(event.data)
 
                 switch (data.type) {
@@ -160,7 +158,6 @@ export function useDeepgramSocket(audienciaId: string) {
                     }
 
                     case 'cost_update': {
-                        console.log('RECIBIDO COSTO CLAUDE WS:', data.claude_usd)
                         if (typeof data.claude_usd === 'number') {
                             useCanvasStore.getState().setClaudeStreamingCost(data.claude_usd)
                         }
@@ -175,7 +172,6 @@ export function useDeepgramSocket(audienciaId: string) {
         ws.onclose = (event) => {
             setIsConnected(false)
             useCanvasStore.getState().setConnectionStatus('disconnected')
-            console.log(`WebSocket closed — code: ${event.code}, reason: "${event.reason}", wasClean: ${event.wasClean}`)
 
             // Auto-reconnect
             if (reconnectAttemptsRef.current < maxReconnectAttempts) {

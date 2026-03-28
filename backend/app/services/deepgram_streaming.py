@@ -200,15 +200,15 @@ class DeepgramStreamingService:
         if self._connection:
             try:
                 await self._connection.send_close_stream()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[DG] send_close_stream error (ignorado en cierre): {e}")
             self._connection = None
 
         if self._connection_ctx:
             try:
                 await self._connection_ctx.__aexit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[DG] __aexit__ error (ignorado en cierre): {e}")
             self._connection_ctx = None
 
         logger.info("Deepgram connection closed by client")
