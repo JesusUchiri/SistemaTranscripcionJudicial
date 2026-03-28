@@ -321,7 +321,9 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
     # Con Sonnet (8192 tokens de salida) y ~20k chars por chunk:
     #   ~20k chars ≈ 5k tokens entrada → output ≈ 4-6k tokens → cabe holgado.
     # Una audiencia de 2800 segs (~150k chars) produce ~8 bloques.
-    CHUNK_SIZE = 20_000   # chars por chunk de transcripción
+    # 12k chars → ~3,000-4,000 tokens de salida HTML por bloque (holgado bajo 8192)
+    # Para esta audiencia (315k chars) produce ~27 bloques
+    CHUNK_SIZE = 12_000   # chars por chunk de transcripción
     ACTA_MODEL = settings.ANTHROPIC_MODEL_ACTA
     ACTA_MAX_TOKENS = 8192
 
