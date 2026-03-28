@@ -300,38 +300,7 @@ async def transcribir_audio(
 
 # ── Nuevo flujo 2 pasos ──────────────────────────────────────────────────────
 
-async def _optimizar_audio_background(audiencia_id: str, audio_path: str) -> None:
-    """
-    Convierte el archivo a FLAC optimizado en background, después de devolver la respuesta.
-    Actualiza audio_path en BD cuando termina. Si falla, el archivo original queda intacto.
-    """
-    orig_size_mb = os.path.getsize(audio_path) / 1024 / 1024
-    try:
-        optimized_path, was_optimized = await optimize_for_storage(audio_path)
-    except Exception as e:
-        logger.error(f"[bg_optimize] Error optimizando {audiencia_id}: {e}")
-        return
 
-    if not was_optimized:
-        return
-
-    async with async_session() as db:
-        try:
-            result = await db.execute(
-                select(Audiencia).where(Audiencia.id == uuid.UUID(audiencia_id))
-            )
-            audiencia = result.scalar_one_or_none()
-            if audiencia:
-                audiencia.audio_path = optimized_path
-                await db.commit()
-            opt_size_mb = os.path.getsize(optimized_path) / 1024 / 1024
-            logger.info(
-                f"[bg_optimize] {audiencia_id}: {orig_size_mb:.1f}MB → FLAC {opt_size_mb:.1f}MB"
-            )
-            if os.path.exists(audio_path):
-                os.unlink(audio_path)
-        except Exception as e:
-            logger.error(f"[bg_optimize] Error actualizando BD {audiencia_id}: {e}")
 
 
 @router.post("/subir", status_code=status.HTTP_200_OK)
@@ -398,9 +367,24 @@ async def subir_audio(
     audiencia_id_str = str(audiencia.id)
     logger.info(f"[subir] Audiencia creada: {audiencia_id_str}, duración: {duracion:.1f}s")
 
-    # Optimización FLAC en background — puede tardar minutos para archivos WAV grandes.
-    # La respuesta se devuelve de inmediato; /procesar leerá la ruta actualizada de BD.
-    background_tasks.add_task(_optimizar_audio_background, audiencia_id_str, audio_path)
+    # Optimización FLAC síncrona para que el front reciba el archivo ligero en el editor
+    try:
+        orig_size_mb = os.path.getsize(audio_path) / 1024 / 1024
+        optimized_path, was_optimized = await optimize_for_storage(audio_path)
+        
+        if was_optimized:
+            audiencia.audio_path = optimized_path
+            await db.commit()
+            opt_size_mb = os.path.getsize(optimized_path) / 1024 / 1024
+            logger.info(f"[subir] {audiencia_id_str}: {orig_size_mb:.1f}MB → FLAC {opt_size_mb:.1f}MB")
+            
+            if os.path.exists(audio_path):
+                os.unlink(audio_path)
+        else:
+            await db.commit()
+    except Exception as e:
+        logger.error(f"[subir] Error optimizando en subir_audio {audiencia_id_str}: {e}")
+        await db.commit()
 
     return {
         "audiencia_id": audiencia_id_str,
