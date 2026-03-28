@@ -522,7 +522,7 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         estado="borrador",
         contenido_llm=contenido_llm,
         prompt_utilizado=prompt[:2000],  # Guardar inicio del prompt para referencia
-        modelo_llm=settings.ANTHROPIC_MODEL,
+        modelo_llm=ACTA_MODEL,
         tokens_used=tokens_used,
         confianza=0.9,
         generado_por=usuario_id,
