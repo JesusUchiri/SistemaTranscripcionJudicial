@@ -334,7 +334,7 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
             prompt = _apply_substitutions(prompt_template, transcripcion)
             message = await client.messages.create(
                 model=settings.ANTHROPIC_MODEL,
-                max_tokens=8192,
+                max_tokens=4096,
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -409,7 +409,7 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
 
                 msg = await client.messages.create(
                     model=settings.ANTHROPIC_MODEL,
-                    max_tokens=8192,
+                    max_tokens=4096,
                     temperature=0.1,
                     messages=[{"role": "user", "content": prompt}],
                 )
