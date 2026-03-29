@@ -14,6 +14,27 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def make_celery_session():
+    """
+    Session factory para tareas Celery.
+
+    Usa NullPool para evitar que las conexiones del pool queden ligadas
+    al event loop de una llamada anterior. Cada tarea crea y destruye
+    su propia conexión, lo que es correcto para procesos de larga duración.
+    """
+    celery_engine = create_async_engine(
+        settings.DATABASE_URL,
+        poolclass=NullPool,
+        connect_args={"timeout": 30, "command_timeout": 60},
+    )
+    return async_sessionmaker(
+        celery_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+
 # Configuración de engine según ambiente
 if settings.ENVIRONMENT == "production":
     # Producción con 2 workers uvicorn: cada worker tiene su propio pool.

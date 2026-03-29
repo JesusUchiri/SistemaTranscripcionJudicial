@@ -53,8 +53,10 @@ async def _generate_acta_async(
 ):
     """Genera el acta y actualiza el registro existente si acta_id está presente."""
     from app.services.acta_generator import generar_acta
+    from app.database import make_celery_session
 
-    async with async_session() as db:
+    celery_session = make_celery_session()
+    async with celery_session() as db:
         acta_generada = await generar_acta(
             audiencia_id=uuid.UUID(audiencia_id),
             formato=formato,
@@ -74,8 +76,10 @@ async def _marcar_error(acta_id: str, detalle: str):
     """Marca el acta como 'error' para que el frontend deje de hacer polling."""
     from sqlalchemy import select
     from app.models.acta import Acta
+    from app.database import make_celery_session
 
-    async with async_session() as db:
+    celery_session = make_celery_session()
+    async with celery_session() as db:
         result = await db.execute(select(Acta).where(Acta.id == uuid.UUID(acta_id)))
         acta = result.scalar_one_or_none()
         if acta and acta.estado == "generando":
