@@ -26,22 +26,20 @@ def generate_acta(
     en lugar de crear uno nuevo.
     """
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(
+        # asyncio.run() maneja correctamente el ciclo de vida del event loop,
+        # incluyendo la limpieza de conexiones asyncpg antes de cerrar el loop.
+        result = asyncio.run(
             _generate_acta_async(audiencia_id, formato, usuario_id, acta_id)
         )
-        loop.close()
         return result
     except Exception as exc:
-        logger.error(f"Error en tarea generate_acta: {exc}")
-        # Marcar acta como "error" para que el frontend deje de hacer polling
-        if acta_id:
+        logger.error(f"Error en tarea generate_acta: {exc}", exc_info=True)
+        # Marcar acta como "error" solo si la tarea NO va a reintentarse,
+        # o si ya se agotaron los reintentos.
+        will_retry = self.request.retries < self.max_retries
+        if acta_id and not will_retry:
             try:
-                loop2 = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop2)
-                loop2.run_until_complete(_marcar_error(acta_id, str(exc)))
-                loop2.close()
+                asyncio.run(_marcar_error(acta_id, str(exc)))
             except Exception:
                 pass
         raise self.retry(exc=exc, countdown=60)
@@ -55,8 +53,6 @@ async def _generate_acta_async(
 ):
     """Genera el acta y actualiza el registro existente si acta_id está presente."""
     from app.services.acta_generator import generar_acta
-    from sqlalchemy import select
-    from app.models.acta import Acta
 
     async with async_session() as db:
         acta_generada = await generar_acta(
@@ -82,7 +78,7 @@ async def _marcar_error(acta_id: str, detalle: str):
     async with async_session() as db:
         result = await db.execute(select(Acta).where(Acta.id == uuid.UUID(acta_id)))
         acta = result.scalar_one_or_none()
-        if acta:
+        if acta and acta.estado == "generando":
             acta.estado = "error"
             acta.contenido_llm = f"Error en generación: {detalle[:500]}"
             await db.commit()
