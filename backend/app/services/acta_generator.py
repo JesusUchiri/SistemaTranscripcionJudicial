@@ -155,6 +155,7 @@ async def generar_acta(
     formato: str,
     usuario_id: uuid.UUID,
     db: AsyncSession,
+    acta_existente_id: uuid.UUID | None = None,
 ) -> Acta:
     """
     Genera el acta oficial de audiencia:
@@ -484,7 +485,11 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         .order_by(Acta.version.desc())
     )
     ultima_acta = result.scalars().first()
-    nueva_version = (ultima_acta.version + 1) if ultima_acta else 1
+    # Si hay acta_existente_id usamos su versión; si no, calculamos la siguiente
+    if acta_existente_id and ultima_acta and ultima_acta.id == acta_existente_id:
+        nueva_version = ultima_acta.version
+    else:
+        nueva_version = (ultima_acta.version + 1) if ultima_acta else 1
 
     # 10. Reemplazar tokens {{VARIABLE}} en el contenido generado
     reemplazos = {
@@ -514,20 +519,35 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
         if valor:
             contenido_llm = contenido_llm.replace(f"{{{{{token}}}}}", valor)
 
-    # 11. Guardar en BD
-    acta = Acta(
-        audiencia_id=audiencia_id,
-        version=nueva_version,
-        formato=formato,
-        estado="borrador",
-        contenido_llm=contenido_llm,
-        prompt_utilizado=prompt[:2000],  # Guardar inicio del prompt para referencia
-        modelo_llm=ACTA_MODEL,
-        tokens_used=tokens_used,
-        confianza=0.9,
-        generado_por=usuario_id,
-    )
-    db.add(acta)
+    # 11. Guardar en BD (actualizar placeholder si existe, o crear nuevo)
+    if acta_existente_id:
+        result_e = await db.execute(select(Acta).where(Acta.id == acta_existente_id))
+        acta = result_e.scalar_one_or_none()
+
+    if acta_existente_id and acta:
+        acta.version = nueva_version
+        acta.formato = formato
+        acta.estado = "borrador"
+        acta.contenido_llm = contenido_llm
+        acta.prompt_utilizado = prompt[:2000]
+        acta.modelo_llm = ACTA_MODEL
+        acta.tokens_used = tokens_used
+        acta.confianza = 0.9
+        acta.generado_por = usuario_id
+    else:
+        acta = Acta(
+            audiencia_id=audiencia_id,
+            version=nueva_version,
+            formato=formato,
+            estado="borrador",
+            contenido_llm=contenido_llm,
+            prompt_utilizado=prompt[:2000],
+            modelo_llm=ACTA_MODEL,
+            tokens_used=tokens_used,
+            confianza=0.9,
+            generado_por=usuario_id,
+        )
+        db.add(acta)
     await db.flush()
     await db.refresh(acta)
 

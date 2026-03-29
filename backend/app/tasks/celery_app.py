@@ -24,5 +24,8 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
 )
 
-# Auto-discover tasks in app.tasks package
-celery_app.autodiscover_tasks(["app.tasks"])
+# Registrar tareas explícitamente (autodiscover requiere módulos llamados tasks.py)
+celery_app.conf.imports = [
+    "app.tasks.generate_acta",
+    "app.tasks.batch_process",
+]

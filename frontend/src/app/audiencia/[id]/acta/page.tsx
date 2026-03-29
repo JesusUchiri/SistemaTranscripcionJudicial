@@ -13,9 +13,11 @@ const PASOS_GENERACION = [
     'Recopilando segmentos de transcripción...',
     'Identificando hablantes y roles...',
     'Enviando a Claude para redacción judicial...',
-    'Generando el acta (audiencias largas pueden tardar varios minutos)...',
+    'Procesando bloques de transcripción (puede tardar 10-30 min en audios largos)...',
     'Ensamblando secciones y aplicando formato oficial...',
 ]
+
+const POLL_INTERVAL_MS = 8000 // 8s entre polls
 
 export default function PaginaActa() {
     const params = useParams()
@@ -91,22 +93,39 @@ export default function PaginaActa() {
         setError(null)
         setPasoActual(0)
 
-        // Avanzar pasos cada ~8s para dar feedback visual mientras Claude genera
+        // Avanzar pasos visualmente mientras se espera
         let paso = 0
         pasoIntervalRef.current = setInterval(() => {
             paso = Math.min(paso + 1, PASOS_GENERACION.length - 1)
             setPasoActual(paso)
-        }, 30000) // 30s entre pasos — audiencias largas generan en múltiples bloques
+        }, 60000) // 60s entre pasos
 
         try {
             const formato = audiencia?.instancia === 'sala_apelaciones' ? 'B' : 'A'
-            await api.post(
+
+            // POST retorna 202 inmediatamente con acta estado="generando"
+            const res = await api.post<Acta>(
                 `/api/audiencias/${audienciaId}/actas/generar`,
                 { formato },
-                { timeout: 600000 }, // 600s — audiencias largas se generan en múltiples bloques (hasta ~5 min)
+                { timeout: 15000 },
             )
-            await fetchAudienciaYActas()
-            mostrarExito('Acta generada correctamente.')
+
+            // Polling hasta que el estado deje de ser "generando"
+            let acta = res.data
+            while (acta.estado === 'generando') {
+                await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
+                const poll = await api.get<Acta[]>(`/api/audiencias/${audienciaId}/actas`)
+                const latest = poll.data.find(a => a.id === acta.id) || poll.data[0]
+                if (!latest) break
+                acta = latest
+            }
+
+            if (acta.estado === 'error') {
+                setError('Error generando el acta. ' + (acta.contenido_llm?.replace('Error en generación: ', '') || ''))
+            } else {
+                await fetchAudienciaYActas()
+                mostrarExito('Acta generada correctamente.')
+            }
         } catch (err: any) {
             setError(
                 err.response?.data?.detail ||
@@ -586,7 +605,7 @@ export default function PaginaActa() {
                                 className="text-[10px] text-center mt-5"
                                 style={{ color: 'var(--text-muted)' }}
                             >
-                                Este proceso puede tomar 30–60 segundos
+                                Audios cortos: ~2 min · Audios largos (6h+): 20-30 min
                             </p>
                         </div>
                     </div>

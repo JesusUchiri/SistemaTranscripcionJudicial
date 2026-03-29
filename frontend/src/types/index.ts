@@ -167,7 +167,7 @@ export interface Acta {
     audiencia_id: string
     version: number
     formato: string
-    estado: 'borrador' | 'en_revision' | 'aprobada' | 'exportada'
+    estado: 'generando' | 'error' | 'borrador' | 'en_revision' | 'aprobada' | 'exportada'
     contenido_llm: string | null
     contenido_editado: string | null
     modelo_llm: string | null

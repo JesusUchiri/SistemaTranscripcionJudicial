@@ -12,42 +12,77 @@ from app.database import async_session
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="generate_acta", bind=True, max_retries=2)
-def generate_acta(self, audiencia_id: str, formato: str = "A", usuario_id: str | None = None):
+@celery_app.task(name="generate_acta", bind=True, max_retries=1)
+def generate_acta(
+    self,
+    audiencia_id: str,
+    formato: str = "A",
+    usuario_id: str | None = None,
+    acta_id: str | None = None,
+):
     """
-    Genera el acta oficial de audiencia (tarea asíncrona via Celery):
-    1. Recopila todos los segmentos editados
-    2. Envía a Claude Sonnet 4 con prompt jurídico
-    3. Genera documento con formato oficial (A=Unipersonal, B=Apelaciones)
-    4. Guarda versión en BD
+    Genera el acta oficial (tarea async via Celery).
+    Si acta_id está presente, actualiza ese registro existente (estado="generando")
+    en lugar de crear uno nuevo.
     """
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         result = loop.run_until_complete(
-            _generate_acta_async(audiencia_id, formato, usuario_id)
+            _generate_acta_async(audiencia_id, formato, usuario_id, acta_id)
         )
         loop.close()
         return result
     except Exception as exc:
         logger.error(f"Error en tarea generate_acta: {exc}")
-        raise self.retry(exc=exc, countdown=30)
+        # Marcar acta como "error" para que el frontend deje de hacer polling
+        if acta_id:
+            try:
+                loop2 = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop2)
+                loop2.run_until_complete(_marcar_error(acta_id, str(exc)))
+                loop2.close()
+            except Exception:
+                pass
+        raise self.retry(exc=exc, countdown=60)
 
 
-async def _generate_acta_async(audiencia_id: str, formato: str, usuario_id: str | None):
-    """Wrapper async para ejecutar la generación dentro del event loop de Celery."""
+async def _generate_acta_async(
+    audiencia_id: str,
+    formato: str,
+    usuario_id: str | None,
+    acta_id: str | None,
+):
+    """Genera el acta y actualiza el registro existente si acta_id está presente."""
     from app.services.acta_generator import generar_acta
+    from sqlalchemy import select
+    from app.models.acta import Acta
 
     async with async_session() as db:
-        acta = await generar_acta(
+        acta_generada = await generar_acta(
             audiencia_id=uuid.UUID(audiencia_id),
             formato=formato,
             usuario_id=uuid.UUID(usuario_id) if usuario_id else uuid.uuid4(),
             db=db,
+            acta_existente_id=uuid.UUID(acta_id) if acta_id else None,
         )
         await db.commit()
         return {
-            "acta_id": str(acta.id),
-            "version": acta.version,
-            "estado": acta.estado,
+            "acta_id": str(acta_generada.id),
+            "version": acta_generada.version,
+            "estado": acta_generada.estado,
         }
+
+
+async def _marcar_error(acta_id: str, detalle: str):
+    """Marca el acta como 'error' para que el frontend deje de hacer polling."""
+    from sqlalchemy import select
+    from app.models.acta import Acta
+
+    async with async_session() as db:
+        result = await db.execute(select(Acta).where(Acta.id == uuid.UUID(acta_id)))
+        acta = result.scalar_one_or_none()
+        if acta:
+            acta.estado = "error"
+            acta.contenido_llm = f"Error en generación: {detalle[:500]}"
+            await db.commit()

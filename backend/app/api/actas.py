@@ -17,7 +17,6 @@ from app.models.acta import Acta
 from app.models.audiencia import Audiencia
 from app.models.usuario import Usuario
 from app.schemas.acta import ActaCreate, ActaResponse, ActaUpdate
-from app.services.acta_generator import generar_acta
 
 router = APIRouter(
     prefix="/api/audiencias/{audiencia_id}/actas",
@@ -25,7 +24,7 @@ router = APIRouter(
 )
 
 
-@router.post("/generar", response_model=ActaResponse, status_code=201)
+@router.post("/generar", response_model=ActaResponse, status_code=202)
 async def generar_acta_endpoint(
     audiencia_id: uuid.UUID,
     datos: ActaCreate,
@@ -33,15 +32,10 @@ async def generar_acta_endpoint(
     usuario: Usuario = Depends(get_current_user),
 ):
     """
-    Genera un borrador de acta oficial a partir de la transcripción.
-
-    - Formato A: Juzgado Penal Unipersonal
-    - Formato B: Sala Penal de Apelaciones (colegiado)
-
-    Recopila todos los segmentos, metadatos y hablantes,
-    los envía a Claude Sonnet 4 y guarda el resultado como borrador.
+    Inicia la generación asíncrona del acta. Retorna 202 inmediatamente con
+    estado="generando". El frontend debe hacer polling a GET /actas hasta que
+    el estado cambie a "borrador" o "error".
     """
-    # Verificar que la audiencia existe
     result = await db.execute(
         select(Audiencia).where(Audiencia.id == audiencia_id)
     )
@@ -49,25 +43,35 @@ async def generar_acta_endpoint(
     if not audiencia:
         raise HTTPException(status_code=404, detail="Audiencia no encontrada")
 
-    try:
-        acta = await generar_acta(
-            audiencia_id=audiencia_id,
-            formato=datos.formato,
-            usuario_id=usuario.id,
-            db=db,
-        )
-        return acta
-    except ValueError as e:
-        # 400: error de validación (ej: sin segmentos)
-        raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        # 500: error interno (ej: fallo de Claude API)
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error inesperado generando acta: {str(e)}",
-        )
+    # Calcular próxima versión
+    result_v = await db.execute(
+        select(Acta).where(Acta.audiencia_id == audiencia_id).order_by(Acta.version.desc())
+    )
+    ultima = result_v.scalars().first()
+    next_version = (ultima.version + 1) if ultima else 1
+
+    # Crear placeholder inmediatamente
+    acta = Acta(
+        audiencia_id=audiencia_id,
+        version=next_version,
+        formato=datos.formato,
+        estado="generando",
+        generado_por=usuario.id,
+    )
+    db.add(acta)
+    await db.commit()
+    await db.refresh(acta)
+
+    # Lanzar tarea Celery en background
+    from app.tasks.generate_acta import generate_acta as celery_generate_acta
+    celery_generate_acta.delay(
+        str(audiencia_id),
+        datos.formato,
+        str(usuario.id),
+        str(acta.id),
+    )
+
+    return acta
 
 
 @router.get("", response_model=list[ActaResponse])
