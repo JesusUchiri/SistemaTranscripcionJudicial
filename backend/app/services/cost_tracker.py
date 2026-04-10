@@ -22,10 +22,9 @@ CLAUDE/ANTHROPIC (por millón de tokens):
 import logging
 import uuid
 from typing import Optional
-
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session
-
 from app.models.uso_api import UsoApi
 
 logger = logging.getLogger(__name__)
@@ -166,18 +165,37 @@ async def registrar_uso_deepgram(
     )
 
     if db:
-        db.add(registro)
-        # Se asume que el que provee la db hará el commit
+        try:
+            # Usamos no_autoflush y flusheamos inmediatamente para aislar el registro
+            with db.no_autoflush:
+                db.add(registro)
+                await db.flush()
+            logger.info(f"[COSTO] {servicio} registrado en sesión principal.")
+        except Exception as e:
+            logger.warning(f"[COSTO] ⚠️ Falló registro en sesión principal ({e}). Reintentando en transiente...")
+            if registro in db.new:
+                db.expunge(registro)
+            # Reintento con sesión independiente
+            return await registrar_uso_deepgram(
+                db=None,
+                servicio=servicio,
+                modelo=modelo,
+                duracion_segundos=duracion_segundos,
+                modo=modo,
+                diarize=diarize,
+                audiencia_id=audiencia_id,
+                usuario_id=usuario_id
+            )
     else:
-        # Modo fallback para llamadas background
-        async with async_session() as session:
-            session.add(registro)
-            await session.commit()
+        # Modo transiente: sesión independiente para no afectar la transacción principal
+        try:
+            async with async_session() as session:
+                session.add(registro)
+                await session.commit()
+                logger.info(f"[COSTO] ✅ {servicio}: {duracion_segundos:.1f}s → ${costo:.6f} USD (persistido)")
+        except Exception as e:
+            logger.error(f"[COSTO] ❌ Error crítico persistiendo registro uso_api: {e}")
 
-    logger.info(
-        f"[COSTO] {servicio}: {duracion_segundos:.1f}s ({duracion_segundos/60:.2f}min) "
-        f"→ ${costo:.6f} USD [{modelo}]"
-    )
     return registro
 
 
@@ -207,8 +225,7 @@ async def registrar_uso_claude(
 
     logger.info(
         f"[COSTO] Creando registro: servicio={servicio}, modelo={modelo}, "
-        f"in={input_tokens}, out={output_tokens}, costo=${costo:.6f}, "
-        f"audiencia_id={audiencia_id}, usuario_id={usuario_id}"
+        f"in={input_tokens}, out={output_tokens}, costo=${costo:.6f}"
     )
 
     registro = UsoApi(
@@ -222,18 +239,36 @@ async def registrar_uso_claude(
     )
 
     if db:
-        db.add(registro)
+        try:
+            # Usamos no_autoflush para evitar que el db.add() dispare un flush 
+            # accidental de otros objetos en la sesión si hay una consulta pendiente.
+            with db.no_autoflush:
+                db.add(registro)
+                await db.flush()
+            logger.info(f"[COSTO] {servicio} registrado en sesión principal.")
+        except Exception as e:
+            logger.warning(f"[COSTO] ⚠️ Falló registro en sesión principal ({e}). Reintentando en transiente...")
+            # Limpiar el objeto de la sesión principal para no causar errores de flush después
+            if registro in db.new:
+                db.expunge(registro)
+            
+            # Reintentar con sesión transiente (recursivo pero con db=None)
+            return await registrar_uso_claude(
+                db=None,
+                servicio=servicio,
+                modelo=modelo,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                audiencia_id=audiencia_id,
+                usuario_id=usuario_id
+            )
     else:
         try:
             async with async_session() as session:
                 session.add(registro)
                 await session.commit()
-                logger.info(f"[COSTO] ✅ Registro persistido (audiencia_id={audiencia_id})")
+                logger.info(f"[COSTO] ✅ {servicio}: {input_tokens + output_tokens} tokens → ${costo:.6f} USD (persistido)")
         except Exception as e:
-            logger.error(f"[COSTO] ❌ Error persistiendo registro uso_api: {e}", exc_info=True)
+            logger.error(f"[COSTO] ❌ Error persistiendo registro uso_api transiente: {e}")
 
-    logger.info(
-        f"[COSTO] {servicio}: {input_tokens} in + {output_tokens} out = "
-        f"{input_tokens + output_tokens} tokens → ${costo:.6f} USD [{modelo}]"
-    )
     return registro

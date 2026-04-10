@@ -159,20 +159,13 @@ async def generar_acta(
 ) -> Acta:
     """
     Genera el acta oficial de audiencia:
-    1. Recopila todos los segmentos (texto_editado > texto_mejorado > texto_ia)
-    2. Recopila metadatos de audiencia y hablantes
-    3. Envía a Claude Sonnet 4 con prompt de formato oficial
-    4. Guarda versión en BD
-
-    Args:
-        audiencia_id: UUID de la audiencia
-        formato: "A" (Unipersonal) o "B" (Apelaciones)
-        usuario_id: UUID del usuario que solicita
-        db: Sesión de base de datos
-
+    ...
     Returns:
         Acta creada con contenido_llm
     """
+    # Desactivar autoflush para tener control total durante este proceso largo y sensible
+    db.autoflush = False
+
     # 1. Obtener audiencia
     result = await db.execute(
         select(Audiencia).where(Audiencia.id == audiencia_id)
@@ -336,6 +329,12 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
 
         if len(transcripcion) <= CHUNK_SIZE:
             # ── Audiencia corta: una sola llamada ─────────────────────────────
+            # Heartbeat preventivo
+            try:
+                await db.execute(select(1))
+            except Exception:
+                pass
+
             prompt = _apply_substitutions(prompt_template, transcripcion)
             message = await client.messages.create(
                 model=ACTA_MODEL,
@@ -417,6 +416,12 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
                         f"Sin encabezados, sin sección DECISIÓN, sin párrafo de cierre. Solo HTML: <p>, <strong>, <em>."
                     )
 
+                # Heartbeat to keep DB connection alive during long AI calls
+                try:
+                    await db.execute(select(1))
+                except Exception as db_ping_err:
+                    logger.warning(f"DB heartbeat failed: {db_ping_err}")
+
                 msg = await client.messages.create(
                     model=ACTA_MODEL,
                     max_tokens=ACTA_MAX_TOKENS,
@@ -463,22 +468,38 @@ Especialista de Audiencia: {audiencia.especialista_audiencia or 'No especificado
             f"in={total_in_tok} out={total_out_tok} tokens"
         )
 
-        # Registrar uso real en tabla uso_api
-        await registrar_uso_claude(
-            db,
-            servicio="claude_acta",
-            modelo=modelo_real,
-            input_tokens=total_in_tok,
-            output_tokens=total_out_tok,
-            audiencia_id=audiencia_id,
-            usuario_id=usuario_id,
-        )
+        # Registrar uso real en tabla uso_api (siempre en sesión transiente para no contaminar la principal)
+        try:
+            await registrar_uso_claude(
+                db=None, 
+                servicio="claude_acta",
+                modelo=modelo_real,
+                input_tokens=total_in_tok,
+                output_tokens=total_out_tok,
+                audiencia_id=audiencia_id,
+                usuario_id=usuario_id,
+            )
+        except Exception as cost_err:
+            logger.warning(f"No se pudo registrar costo uso_api (no crítico): {cost_err}")
 
     except Exception as e:
         logger.error(f"Error generando acta con Claude: {e}", exc_info=True)
         raise RuntimeError(f"Error al generar acta con la IA: {str(e)}")
 
     # 9. Determinar versión
+    # Heartbeat final antes de las operaciones de guardado para asegurar conexión viva
+    try:
+        await db.execute(select(1))
+    except Exception as db_err:
+        logger.warning(f"DB ping final falló: {db_err}")
+        # Si la conexión se perdió durante la larga espera de Claude, 
+        # intentamos un rollback suave (si es posible) antes de fallar.
+        try:
+            await db.rollback()
+        except:
+            pass
+        raise RuntimeError("La conexión con la base de datos se perdió durante la generación. Por favor, reintente.")
+
     result = await db.execute(
         select(Acta)
         .where(Acta.audiencia_id == audiencia_id)
