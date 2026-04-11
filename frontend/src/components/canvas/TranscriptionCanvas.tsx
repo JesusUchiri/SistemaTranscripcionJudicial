@@ -23,6 +23,7 @@ const canvasStyles = `
     line-height: 1.8;
     padding: 60px 80px !important;
     color: #1A1A1A;
+    min-height: 100%;
   }
 
   /* Etiquetas de Hablantes */

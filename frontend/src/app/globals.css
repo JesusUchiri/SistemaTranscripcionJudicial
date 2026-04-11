@@ -158,6 +158,21 @@ html, body {
 }
 
 /* Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(27, 58, 92, 0.1);
+  border-radius: 10px;
+  border: 2px solid var(--bg-secondary);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--brand-ink);
+}
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(27, 58, 92, 0.1); border-radius: 10px; }

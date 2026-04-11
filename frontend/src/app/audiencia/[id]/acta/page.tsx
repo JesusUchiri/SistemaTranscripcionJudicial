@@ -1,26 +1,41 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import api from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 import { AuthGuard } from '@/components/auth/AuthGuard'
 import ActaEditor from '@/components/acta/ActaEditor'
 import { Acta, Audiencia } from '@/types'
+import { motion, AnimatePresence } from 'framer-motion'
+import { 
+    ChevronLeft, 
+    FileText, 
+    History, 
+    Save, 
+    CheckCircle2, 
+    Download, 
+    Zap, 
+    Clock,
+    Layout,
+    AlertCircle,
+    Loader2
+} from 'lucide-react'
 
-/* ── Pasos de generación para el overlay de progreso ─────────────────── */
+/* ── Pasos de generación ────────────────────────────────── */
 const PASOS_GENERACION = [
-    'Recopilando segmentos de transcripción...',
-    'Identificando hablantes y roles...',
-    'Enviando a Claude para redacción judicial...',
-    'Procesando bloques de transcripción (puede tardar 10-30 min en audios largos)...',
-    'Ensamblando secciones y aplicando formato oficial...',
+    'Recopilando segmentos...',
+    'Identificando roles...',
+    'Redacción con Claude AI...',
+    'Procesando bloques...',
+    'Aplicando formato oficial...'
 ]
 
-const POLL_INTERVAL_MS = 8000 // 8s entre polls
+const POLL_INTERVAL_MS = 8000
 
 export default function PaginaActa() {
     const params = useParams()
+    const router = useRouter()
     const audienciaId = params.id as string
     const { user } = useAuthStore()
 
@@ -35,582 +50,279 @@ export default function PaginaActa() {
     const [successMsg, setSuccessMsg] = useState<string | null>(null)
     const pasoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-    const canApprove = useMemo(
-        () => user?.rol === 'admin' || user?.rol === 'supervisor',
-        [user],
-    )
+    const canApprove = useMemo(() => user?.rol === 'admin' || user?.rol === 'supervisor', [user])
 
     const fetchAudienciaYActas = useCallback(async () => {
         try {
             const resAud = await api.get<Audiencia>(`/api/audiencias/${audienciaId}`)
             setAudiencia(resAud.data)
-
             const resActas = await api.get<Acta[]>(`/api/audiencias/${audienciaId}/actas`)
-            setActas(resActas.data)
-
-            if (resActas.data.length > 0) {
-                const latest = resActas.data[0]
+            const sorted = resActas.data.sort((a, b) => b.version - a.version)
+            setActas(sorted)
+            if (sorted.length > 0 && !currentActa) {
+                const latest = sorted[0]
                 setCurrentActa(latest)
                 setEditorContent(latest.contenido_editado || latest.contenido_llm || '')
             }
-        } catch (err) {
-            console.error('Error cargando acta:', err)
-        }
-    }, [audienciaId])
+        } catch (err) { console.error(err) }
+    }, [audienciaId, currentActa])
 
-    useEffect(() => {
-        fetchAudienciaYActas()
-    }, [fetchAudienciaYActas])
-
-    // Ctrl+S para guardar
-    useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                e.preventDefault()
-                if (currentActa && currentActa.estado !== 'aprobada' && !isSaving) {
-                    guardarCambios()
-                }
-            }
-        }
-        window.addEventListener('keydown', handler)
-        return () => window.removeEventListener('keydown', handler)
-    }, [currentActa, isSaving, editorContent])
-
-    // Limpiar intervalo al desmontar
-    useEffect(() => {
-        return () => {
-            if (pasoIntervalRef.current) clearInterval(pasoIntervalRef.current)
-        }
-    }, [])
-
-    const mostrarExito = (msg: string) => {
-        setSuccessMsg(msg)
-        setTimeout(() => setSuccessMsg(null), 4000)
-    }
+    useEffect(() => { fetchAudienciaYActas() }, [fetchAudienciaYActas])
 
     const generarBorrador = async () => {
         setIsGenerating(true)
         setError(null)
         setPasoActual(0)
-
-        // Avanzar pasos visualmente mientras se espera
-        let paso = 0
         pasoIntervalRef.current = setInterval(() => {
-            paso = Math.min(paso + 1, PASOS_GENERACION.length - 1)
-            setPasoActual(paso)
-        }, 60000) // 60s entre pasos
+            setPasoActual(p => Math.min(p + 1, PASOS_GENERACION.length - 1))
+        }, 15000)
 
         try {
             const formato = audiencia?.instancia === 'sala_apelaciones' ? 'B' : 'A'
-
-            // POST retorna 202 inmediatamente con acta estado="generando"
-            const res = await api.post<Acta>(
-                `/api/audiencias/${audienciaId}/actas/generar`,
-                { formato },
-                { timeout: 15000 },
-            )
-
-            // Polling hasta que el estado deje de ser "generando"
+            const res = await api.post<Acta>(`/api/audiencias/${audienciaId}/actas/generar`, { formato })
             let acta = res.data
             while (acta.estado === 'generando') {
-                await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
+                await new Promise(r => setTimeout(p => r(p), POLL_INTERVAL_MS))
                 const poll = await api.get<Acta[]>(`/api/audiencias/${audienciaId}/actas`)
-                const latest = poll.data.find(a => a.id === acta.id) || poll.data[0]
-                if (!latest) break
-                acta = latest
+                acta = poll.data.find(a => a.id === acta.id) || poll.data[0]
             }
-
-            if (acta.estado === 'error') {
-                setError('Error generando el acta. ' + (acta.contenido_llm?.replace('Error en generación: ', '') || ''))
-            } else {
+            if (acta.estado === 'error') setError('Error en Claude AI.')
+            else { 
+                setCurrentActa(acta)
+                setEditorContent(acta.contenido_editado || acta.contenido_llm || '')
                 await fetchAudienciaYActas()
-                mostrarExito('Acta generada correctamente.')
             }
-        } catch (err: any) {
-            setError(
-                err.response?.data?.detail ||
-                err.message ||
-                'No se pudo generar el acta. Verifica que existan segmentos de transcripción.',
-            )
-        } finally {
+        } catch (err: any) { setError('Error en generación.') } 
+        finally {
             if (pasoIntervalRef.current) clearInterval(pasoIntervalRef.current)
             setIsGenerating(false)
-            setPasoActual(0)
         }
     }
 
     const guardarCambios = async (nuevoEstado?: string) => {
         if (!currentActa) return
         setIsSaving(true)
-        setError(null)
         try {
             const payload: any = { contenido_editado: editorContent }
             if (nuevoEstado) payload.estado = nuevoEstado
-
-            const res = await api.put<Acta>(
-                `/api/audiencias/${audienciaId}/actas/${currentActa.id}`,
-                payload,
-            )
+            const res = await api.put<Acta>(`/api/audiencias/${audienciaId}/actas/${currentActa.id}`, payload)
             setCurrentActa(res.data)
+            setSuccessMsg('Documento actualizado.')
+            setTimeout(() => setSuccessMsg(null), 3000)
             if (nuevoEstado) await fetchAudienciaYActas()
-            mostrarExito('Cambios guardados.')
-        } catch (err: any) {
-            setError(err.response?.data?.detail || 'Error guardando los cambios.')
-        } finally {
-            setIsSaving(false)
-        }
+        } catch { setError('Error al guardar.') }
+        finally { setIsSaving(false) }
     }
 
     const aprobarActa = async () => {
         if (!currentActa || !canApprove) return
-        setError(null)
         try {
-            const res = await api.post<Acta>(
-                `/api/audiencias/${audienciaId}/actas/${currentActa.id}/aprobar`,
-            )
-            setCurrentActa(res.data)
+            await api.post(`/api/audiencias/${audienciaId}/actas/${currentActa.id}/aprobar`)
+            setSuccessMsg('Acta aprobada oficialmente.')
             await fetchAudienciaYActas()
-            mostrarExito('Acta aprobada oficialmente.')
-        } catch (err: any) {
-            setError(
-                'No se pudo aprobar el acta. ' +
-                (err.response?.data?.detail || err.message || ''),
-            )
-        }
+        } catch { setError('Error al aprobar.') }
     }
 
     const descargarActa = async (formato: 'pdf' | 'docx') => {
         if (!currentActa) return
-        setError(null)
         try {
-            const res = await api.get(
-                `/api/audiencias/${audienciaId}/actas/${currentActa.id}/exportar/${formato}`,
-                { responseType: 'blob' },
-            )
+            const res = await api.get(`/api/audiencias/${audienciaId}/actas/${currentActa.id}/exportar/${formato}`, { responseType: 'blob' })
             const url = window.URL.createObjectURL(new Blob([res.data]))
             const link = document.createElement('a')
             link.href = url
-            let fileName = `acta_${audiencia?.expediente || 'oficial'}.${formato}`
-            const cd = res.headers['content-disposition']
-            if (cd) {
-                const m = cd.match(/filename="(.+)"/)
-                if (m?.[1]) fileName = m[1]
-            }
-            link.setAttribute('download', fileName)
+            link.setAttribute('download', `acta_${audiencia?.expediente || 'oficial'}.${formato}`)
             document.body.appendChild(link)
             link.click()
-            link.parentNode?.removeChild(link)
-            window.URL.revokeObjectURL(url)
-        } catch {
-            setError('Error al descargar el documento.')
-        }
+            link.remove()
+        } catch { setError('Error en descarga.') }
     }
 
-    if (!audiencia) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)]">
-                <div
-                    className="w-10 h-10 rounded-full animate-spin border-2"
-                    style={{
-                        borderColor: 'var(--accent-gold)',
-                        borderTopColor: 'transparent',
-                    }}
-                />
-            </div>
-        )
-    }
-
-    const estadoVisual =
-        currentActa?.estado === 'aprobada'
-            ? 'Aprobada'
-            : currentActa?.estado === 'en_revision'
-                ? 'En Revisión'
-                : 'Borrador'
+    if (!audiencia) return (
+        <div className="fixed inset-0 flex items-center justify-center bg-[#FDFCFB]">
+            <Loader2 className="w-10 h-10 animate-spin text-[#A68246]" />
+        </div>
+    )
 
     return (
         <AuthGuard>
-            <div className="h-screen flex flex-col bg-[var(--bg-primary)]">
-
-                {/* ── Header ──────────────────────────────────────────── */}
-                <header
-                    className="flex items-center justify-between px-6 py-3 shrink-0 z-10 sticky top-0"
-                    style={{
-                        background: 'var(--bg-secondary)',
-                        borderBottom: '1px solid var(--border-subtle)',
-                    }}
-                >
-                    <div className="flex items-center gap-4 min-w-0">
+            <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#FDFCFB]">
+                {/* ── Header Ink & Gold ────────────────────────── */}
+                <header className="px-8 py-4 bg-white border-b border-[#1B3A5C]/5 flex items-center justify-between z-30">
+                    <div className="flex items-center gap-6">
                         <button
-                            onClick={() => (window.location.href = `/audiencia/${audienciaId}`)}
-                            className="text-xs px-3 py-1.5 rounded-lg shrink-0 transition-all"
-                            style={{
-                                border: '1px solid var(--border-subtle)',
-                                background: 'var(--bg-surface)',
-                                color: 'var(--text-muted)',
-                            }}
+                            onClick={() => router.push(`/audiencia/${audienciaId}`)}
+                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-[#1B3A5C]/5 text-[#1B3A5C] hover:bg-[#1B3A5C]/10 transition-all"
                         >
-                            Volver
+                            <ChevronLeft className="w-5 h-5" />
                         </button>
-                        <div className="min-w-0">
-                            <h1
-                                className="text-sm font-bold truncate"
-                                style={{ color: 'var(--text-primary)' }}
-                            >
-                                Acta Oficial: {audiencia.expediente}
-                            </h1>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                {audiencia.tipo_audiencia} — v.{currentActa?.version ?? 0}
-                                {currentActa && (
-                                    <span
-                                        className="ml-2 font-mono text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider"
-                                        style={{
-                                            background: 'var(--bg-primary)',
-                                            color: 'var(--text-muted)',
-                                        }}
-                                    >
-                                        {estadoVisual}
-                                    </span>
-                                )}
+                        <div>
+                            <div className="flex items-center gap-3">
+                                <h1 className="text-sm font-bold text-[#1B3A5C]">Acta: {audiencia.expediente}</h1>
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                                    currentActa?.estado === 'aprobada' ? 'bg-green-50 text-green-600' : 'bg-[#A68246]/10 text-[#A68246]'
+                                }`}>
+                                    {currentActa?.estado || 'Sin Iniciar'}
+                                </span>
+                            </div>
+                            <p className="text-[10px] text-[#1B3A5C]/40 uppercase font-bold tracking-widest mt-0.5">
+                                {audiencia.tipo_audiencia} · Versión {currentActa?.version || 0}
                             </p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                        {currentActa?.estado !== 'aprobada' && (
-                            <button
-                                onClick={generarBorrador}
-                                disabled={isGenerating}
-                                className="px-4 py-2 rounded text-xs font-semibold transition-all disabled:opacity-50"
-                                style={{
-                                    background: 'var(--accent-gold)',
-                                    color: '#fff',
-                                }}
-                            >
-                                {isGenerating
-                                    ? 'Generando...'
-                                    : currentActa
-                                        ? `Nueva Versión (v${currentActa.version + 1})`
-                                        : 'Generar Borrador'}
+                    <div className="flex items-center gap-3">
+                        <AnimatePresence>
+                            {successMsg && (
+                                <motion.span initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="text-[10px] font-bold text-green-600 uppercase mr-4">
+                                    {successMsg}
+                                </motion.span>
+                            )}
+                        </AnimatePresence>
+
+                        {!currentActa ? (
+                            <button onClick={generarBorrador} disabled={isGenerating} className="btn-primary flex items-center gap-2 !py-2.5 !rounded-xl !text-xs">
+                                <Zap className="w-4 h-4" /> Generar Borrador
                             </button>
-                        )}
-
-                        {currentActa && currentActa.estado !== 'aprobada' && (
+                        ) : (
                             <>
-                                <button
-                                    onClick={() => guardarCambios()}
-                                    disabled={isSaving}
-                                    className="px-3 py-2 rounded text-xs font-medium transition-colors disabled:opacity-50"
-                                    style={{
-                                        background: 'var(--bg-primary)',
-                                        border: '1px solid var(--border-subtle)',
-                                        color: 'var(--text-secondary)',
-                                    }}
-                                >
-                                    {isSaving ? 'Guardando...' : 'Guardar'}
-                                </button>
-
-                                {currentActa.estado === 'borrador' && (
-                                    <button
-                                        onClick={() => guardarCambios('en_revision')}
-                                        disabled={isSaving}
-                                        className="px-3 py-2 rounded text-xs font-medium transition-colors disabled:opacity-50"
-                                        style={{
-                                            background: 'rgba(37,99,235,0.08)',
-                                            border: '1px solid rgba(37,99,235,0.25)',
-                                            color: '#2563eb',
-                                        }}
-                                    >
-                                        Enviar a Revisión
-                                    </button>
+                                {currentActa.estado !== 'aprobada' && (
+                                    <div className="flex items-center gap-2 bg-[#1B3A5C]/5 p-1 rounded-xl">
+                                        <button onClick={() => guardarCambios()} disabled={isSaving} className="px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C] hover:bg-white hover:shadow-sm transition-all flex items-center gap-2">
+                                            {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Guardar
+                                        </button>
+                                        <button onClick={() => guardarCambios('en_revision')} disabled={isSaving} className="px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C] hover:bg-white hover:shadow-sm transition-all">
+                                            Revisión
+                                        </button>
+                                    </div>
                                 )}
-
                                 {canApprove && currentActa.estado === 'en_revision' && (
-                                    <button
-                                        onClick={aprobarActa}
-                                        className="px-4 py-2 rounded text-xs font-semibold transition-all"
-                                        style={{
-                                            background: '#16a34a',
-                                            color: '#fff',
-                                        }}
-                                    >
-                                        Aprobar Acta
+                                    <button onClick={aprobarActa} className="btn-primary !bg-green-700 !py-2.5 !rounded-xl !text-xs">
+                                        Aprobar Oficialmente
                                     </button>
                                 )}
-                            </>
-                        )}
-
-                        {currentActa && (
-                            <>
-                                {currentActa.estado === 'aprobada' && (
-                                    <span
-                                        className="px-3 py-2 rounded text-xs font-medium"
-                                        style={{
-                                            background: 'var(--bg-primary)',
-                                            border: '1px solid var(--border-subtle)',
-                                            color: 'var(--text-muted)',
-                                        }}
-                                    >
-                                        Aprobada Oficialmente
-                                    </span>
-                                )}
-                                <button
-                                    onClick={() => descargarActa('docx')}
-                                    className="px-3 py-2 rounded text-xs font-semibold transition-colors"
-                                    style={{ background: '#2563eb', color: '#fff' }}
-                                    title={
-                                        currentActa.estado !== 'aprobada'
-                                            ? 'Exportar borrador (no oficial)'
-                                            : 'Descargar acta oficial'
-                                    }
-                                >
-                                    {currentActa.estado === 'aprobada' ? 'DOCX' : 'DOCX (borrador)'}
-                                </button>
-                                <button
-                                    onClick={() => descargarActa('pdf')}
-                                    className="px-3 py-2 rounded text-xs font-semibold transition-colors"
-                                    style={{ background: '#dc2626', color: '#fff' }}
-                                    title={
-                                        currentActa.estado !== 'aprobada'
-                                            ? 'Exportar borrador (no oficial)'
-                                            : 'Descargar acta oficial'
-                                    }
-                                >
-                                    {currentActa.estado === 'aprobada' ? 'PDF' : 'PDF (borrador)'}
-                                </button>
+                                <div className="flex gap-1">
+                                    <button onClick={() => descargarActa('docx')} className="w-10 h-10 flex items-center justify-center rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all">
+                                        <Download className="w-4 h-4" />
+                                    </button>
+                                    <button onClick={() => descargarActa('pdf')} className="w-10 h-10 flex items-center justify-center rounded-xl bg-red-50 text-red-600 hover:bg-red-100 transition-all">
+                                        <FileText className="w-4 h-4" />
+                                    </button>
+                                </div>
                             </>
                         )}
                     </div>
                 </header>
 
-                {/* ── Mensajes de estado ───────────────────────────────── */}
-                {(error || successMsg) && (
-                    <div
-                        className="px-6 py-2.5 text-xs flex items-center justify-between"
-                        style={{
-                            background: error
-                                ? 'rgba(220,38,38,0.08)'
-                                : 'rgba(22,163,74,0.08)',
-                            borderBottom: '1px solid var(--border-subtle)',
-                            color: error ? '#dc2626' : '#16a34a',
-                        }}
-                    >
-                        <span>{error ?? successMsg}</span>
-                        {error && (
-                            <button
-                                onClick={() => setError(null)}
-                                className="text-xs ml-4 underline opacity-70 hover:opacity-100"
-                            >
-                                Cerrar
-                            </button>
-                        )}
-                    </div>
-                )}
-
-                {/* ── Cuerpo principal ─────────────────────────────────── */}
-                <div className="flex-1 flex overflow-hidden">
-
-                    {/* Panel historial */}
-                    <aside
-                        className="w-56 shrink-0 border-r hidden xl:flex flex-col"
-                        style={{
-                            background: 'var(--bg-secondary)',
-                            borderColor: 'var(--border-subtle)',
-                        }}
-                    >
-                        <div
-                            className="px-4 py-3 border-b"
-                            style={{ borderColor: 'var(--border-subtle)' }}
-                        >
-                            <h3
-                                className="text-[10px] font-bold uppercase tracking-wider"
-                                style={{ color: 'var(--accent-gold)' }}
-                            >
-                                Versiones
-                            </h3>
+                <main className="flex-1 flex overflow-hidden">
+                    {/* ── Sidebar de Versiones ────────────────────── */}
+                    <aside className="w-64 xl:w-72 shrink-0 bg-white border-r border-[#1B3A5C]/5 flex flex-col shadow-xl z-20">
+                        <div className="px-6 py-4 border-b border-[#1B3A5C]/5 flex items-center gap-2">
+                            <History className="w-4 h-4 text-[#A68246]" />
+                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C]">Historial</h3>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
                             {actas.map(a => (
-                                <div
+                                <button
                                     key={a.id}
-                                    onClick={() => {
-                                        setCurrentActa(a)
-                                        setEditorContent(
-                                            a.contenido_editado || a.contenido_llm || '',
-                                        )
-                                    }}
-                                    className="p-3 rounded border text-xs cursor-pointer transition-all"
-                                    style={{
-                                        background:
-                                            a.id === currentActa?.id
-                                                ? 'rgba(37,99,235,0.06)'
-                                                : 'var(--bg-primary)',
-                                        borderColor:
-                                            a.id === currentActa?.id
-                                                ? 'rgba(37,99,235,0.3)'
-                                                : 'var(--border-subtle)',
-                                    }}
+                                    onClick={() => { setCurrentActa(a); setEditorContent(a.contenido_editado || a.contenido_llm || '') }}
+                                    className={`w-full p-4 rounded-2xl border text-left transition-all ${
+                                        a.id === currentActa?.id 
+                                        ? 'bg-[#1B3A5C]/5 border-[#1B3A5C]/10 shadow-sm' 
+                                        : 'bg-white border-transparent hover:bg-[#1B3A5C]/[0.02]'
+                                    }`}
                                 >
-                                    <div
-                                        className="flex justify-between font-semibold mb-1"
-                                        style={{ color: 'var(--text-primary)' }}
-                                    >
-                                        <span>Versión {a.version}</span>
-                                        <span
-                                            className="text-[10px] uppercase"
-                                            style={{ color: 'var(--text-muted)' }}
-                                        >
-                                            {a.estado}
-                                        </span>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <span className="text-xs font-bold text-[#1B3A5C]">Versión {a.version}</span>
+                                        <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                                            a.estado === 'aprobada' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                                        }`}>{a.estado}</span>
                                     </div>
-                                    <div
-                                        className="text-[10px] truncate"
-                                        style={{ color: 'var(--text-muted)' }}
-                                    >
-                                        {new Date(a.updated_at).toLocaleString()}
+                                    <div className="flex items-center gap-2 text-[9px] text-[#1B3A5C]/40 font-bold uppercase tracking-tighter">
+                                        <Clock className="w-3 h-3" />
+                                        {new Date(a.updated_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                     </div>
-                                </div>
+                                </button>
                             ))}
-                            {actas.length === 0 && (
-                                <p
-                                    className="text-xs"
-                                    style={{ color: 'var(--text-muted)' }}
-                                >
-                                    Sin versiones.
-                                </p>
-                            )}
                         </div>
                     </aside>
 
-                    {/* Editor */}
-                    <div className="flex-1 overflow-y-auto">
-                        {currentActa ? (
-                            <ActaEditor
-                                key={currentActa.id}
-                                initialContent={
-                                    currentActa.contenido_editado || currentActa.contenido_llm || ''
-                                }
-                                onChange={setEditorContent}
-                                editable={currentActa.estado !== 'aprobada'}
-                            />
-                        ) : (
-                            <div className="flex flex-col items-center justify-center h-full min-h-[400px] space-y-4 text-center px-8">
-                                <div
-                                    className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold"
-                                    style={{
-                                        background: 'var(--bg-secondary)',
-                                        color: 'var(--text-muted)',
-                                        border: '1px solid var(--border-subtle)',
-                                    }}
-                                >
-                                    A
-                                </div>
-                                <div>
-                                    <h3
-                                        className="text-base font-semibold"
-                                        style={{ color: 'var(--text-primary)' }}
-                                    >
-                                        Sin acta generada
-                                    </h3>
-                                    <p
-                                        className="text-sm mt-1"
-                                        style={{ color: 'var(--text-muted)' }}
-                                    >
-                                        Genera el borrador inicial a partir de la transcripción
-                                        procesada.
-                                    </p>
-                                </div>
-                                <button
-                                    onClick={generarBorrador}
-                                    disabled={isGenerating}
-                                    className="px-6 py-2.5 rounded text-sm font-semibold disabled:opacity-50"
-                                    style={{ background: 'var(--accent-gold)', color: '#fff' }}
-                                >
-                                    {isGenerating ? 'Generando...' : 'Generar Borrador'}
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* ── Overlay de generación ────────────────────────────── */}
-                {isGenerating && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center"
-                        style={{ background: 'rgba(0,0,0,0.45)' }}>
-                        <div
-                            className="rounded-xl p-8 shadow-2xl w-full max-w-sm mx-4"
-                            style={{ background: 'var(--bg-secondary)' }}
-                        >
-                            {/* Spinner */}
-                            <div className="flex justify-center mb-5">
-                                <div
-                                    className="w-12 h-12 rounded-full animate-spin border-2"
-                                    style={{
-                                        borderColor: 'var(--accent-gold)',
-                                        borderTopColor: 'transparent',
-                                    }}
-                                />
-                            </div>
-
-                            <h3
-                                className="text-base font-bold text-center mb-1"
-                                style={{ color: 'var(--text-primary)' }}
-                            >
-                                Generando acta judicial
-                            </h3>
-                            <p
-                                className="text-xs text-center mb-6"
-                                style={{ color: 'var(--text-muted)' }}
-                            >
-                                Claude Sonnet 4 está procesando la transcripción
-                            </p>
-
-                            {/* Pasos */}
-                            <div className="space-y-2">
-                                {PASOS_GENERACION.map((paso, i) => (
-                                    <div
-                                        key={i}
-                                        className="flex items-center gap-3 text-xs py-1 transition-all"
-                                        style={{
-                                            color:
-                                                i < pasoActual
-                                                    ? '#16a34a'
-                                                    : i === pasoActual
-                                                        ? 'var(--text-primary)'
-                                                        : 'var(--text-muted)',
-                                            opacity: i > pasoActual ? 0.4 : 1,
-                                        }}
-                                    >
-                                        <span
-                                            className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold"
-                                            style={{
-                                                background:
-                                                    i < pasoActual
-                                                        ? '#16a34a'
-                                                        : i === pasoActual
-                                                            ? 'var(--accent-gold)'
-                                                            : 'var(--bg-primary)',
-                                                color:
-                                                    i <= pasoActual ? '#fff' : 'var(--text-muted)',
-                                                border: '1px solid var(--border-subtle)',
-                                            }}
-                                        >
-                                            {i < pasoActual ? '✓' : i + 1}
-                                        </span>
-                                        {paso}
+                    {/* ── Área del Editor ────────────────────────── */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#F7F5F2]/50 relative p-12 flex justify-center">
+                        <div className="w-full max-w-[850px]">
+                            {currentActa ? (
+                                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="canvas-document animate-fade-in">
+                                    <div className="canvas-document__header px-16 pt-12 pb-8 flex items-center justify-between border-b-2 border-[#1B3A5C]">
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <div className="w-6 h-6 bg-[#1B3A5C] rounded flex items-center justify-center text-white text-[10px] font-bold">J</div>
+                                                <span className="text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C]/40">Poder Judicial del Perú</span>
+                                            </div>
+                                            <h2 className="text-xl font-bold text-[#1B3A5C]" style={{ fontFamily: 'var(--font-display)' }}>Acta de Audiencia Judicial</h2>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-[10px] font-bold text-[#A68246] uppercase">Expediente Digital</span>
+                                            <p className="text-xs font-bold text-[#1B3A5C]">{audiencia.expediente}</p>
+                                        </div>
                                     </div>
-                                ))}
-                            </div>
-
-                            <p
-                                className="text-[10px] text-center mt-5"
-                                style={{ color: 'var(--text-muted)' }}
-                            >
-                                Audios cortos: ~2 min · Audios largos (6h+): 20-30 min
-                            </p>
+                                    
+                                    <div className="px-16 py-12">
+                                        <ActaEditor 
+                                            key={currentActa.id} 
+                                            initialContent={currentActa.contenido_editado || currentActa.contenido_llm || ''} 
+                                            onChange={setEditorContent} 
+                                            editable={currentActa.estado !== 'aprobada'} 
+                                        />
+                                    </div>
+                                </motion.div>
+                            ) : (
+                                <div className="h-[600px] flex flex-col items-center justify-center text-center space-y-6">
+                                    <div className="w-20 h-20 bg-white rounded-3xl border border-[#1B3A5C]/10 shadow-xl flex items-center justify-center">
+                                        <FileText className="w-10 h-10 text-[#1B3A5C]/20" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-[#1B3A5C]">Inicie la Redacción</h3>
+                                        <p className="text-sm text-[#1B3A5C]/40 max-w-xs mx-auto">Use el motor de Claude AI para transformar la transcripción en un acta oficial estructurada.</p>
+                                    </div>
+                                    <button onClick={generarBorrador} disabled={isGenerating} className="btn-primary flex items-center gap-3">
+                                        <Zap className="w-5 h-5" /> Comenzar con IA
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
-                )}
+                </main>
 
+                {/* ── Overlay de Generación Estilizado ───────────── */}
+                <AnimatePresence>
+                    {isGenerating && (
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-[#1B3A5C]/40 backdrop-blur-sm">
+                            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-white rounded-[32px] p-10 shadow-2xl w-full max-w-md border border-[#A68246]/20">
+                                <div className="flex flex-col items-center">
+                                    <div className="relative mb-8">
+                                        <div className="w-20 h-20 border-4 border-[#A68246]/10 rounded-full" />
+                                        <div className="absolute inset-0 w-20 h-20 border-4 border-[#A68246] border-t-transparent rounded-full animate-spin" />
+                                        <Zap className="absolute inset-0 m-auto w-8 h-8 text-[#A68246]" />
+                                    </div>
+                                    
+                                    <h3 className="text-xl font-bold text-[#1B3A5C] mb-2">Redactando Acta Judicial</h3>
+                                    <p className="text-xs text-[#1B3A5C]/40 uppercase font-bold tracking-widest mb-8">Inteligencia Artificial Claude Sonnet</p>
+
+                                    <div className="w-full space-y-3">
+                                        {PASOS_GENERACION.map((paso, i) => (
+                                            <div key={i} className={`flex items-center gap-4 text-xs font-medium transition-all ${i === pasoActual ? 'text-[#1B3A5C]' : i < pasoActual ? 'text-green-600' : 'text-[#1B3A5C]/20'}`}>
+                                                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${i < pasoActual ? 'bg-green-50 text-green-600' : i === pasoActual ? 'bg-[#A68246] text-white shadow-lg shadow-[#A68246]/20' : 'bg-gray-50'}`}>
+                                                    {i < pasoActual ? '✓' : i + 1}
+                                                </div>
+                                                {paso}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="mt-10 text-[10px] text-[#1B3A5C]/30 font-bold uppercase tracking-tighter italic text-center">Esto puede tomar entre 2 y 5 minutos dependiendo de la duración de la audiencia.</p>
+                                </div>
+                            </motion.div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
             </div>
         </AuthGuard>
     )
