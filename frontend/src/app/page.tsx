@@ -3,13 +3,10 @@
 import { motion } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '@/stores/authStore'
-import { useEffect } from 'react'
 import { 
     Mic2, 
-    FileText, 
     Zap, 
     ShieldCheck, 
-    Gavel, 
     ArrowRight,
     Cpu,
     CheckCircle2
@@ -90,7 +87,7 @@ export default function LandingPage() {
                     >
                         La voz de la justicia,<br />
                         <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#A68246] to-[#1B3A5C]">transcrita con precisión.</span>
-                    </h1 >
+                    </motion.h1 >
 
                     <motion.p 
                         {...fadeInUp}
