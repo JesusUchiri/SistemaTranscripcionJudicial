@@ -12,6 +12,7 @@ interface AuthState {
     error: string | null
 
     login: (credentials: LoginRequest) => Promise<boolean>
+    googleLogin: (idToken: string) => Promise<boolean>
     logout: () => Promise<void>
     fetchUser: () => Promise<void>
     initialize: () => Promise<void>
@@ -54,15 +55,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
     },
 
+    googleLogin: async (idToken) => {
+        localStorage.removeItem('access_token')
+        set({ user: null, token: null, isLoading: true, error: null })
+        
+        try {
+            const { data } = await api.post<TokenResponse>('/api/auth/google', { id_token: idToken })
+            localStorage.setItem('access_token', data.access_token)
+            set({ token: data.access_token })
+            
+            const userRes = await api.get<User>('/api/auth/me')
+            set({ user: userRes.data, isLoading: false })
+            
+            return true
+        } catch (err: any) {
+            set({ isLoading: false, error: err.response?.data?.detail || 'Error en autenticación con Google' })
+            return false
+        }
+    },
+
     logout: async () => {
-        // Limpiar estado local primero para que el interceptor no reintente
         localStorage.removeItem('access_token')
         set({ user: null, token: null })
-        // Luego invalidar la cookie httpOnly en el backend
         try {
             await api.post('/api/auth/logout')
         } catch {
-            // Ignorar errores de red — la cookie expirará por su cuenta
+            // Ignorar
         }
     },
 
@@ -77,7 +95,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     },
 
     initialize: async () => {
-        const token = localStorage.getItem('access_token')
+        const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
         if (token) {
             set({ token })
             await get().fetchUser()

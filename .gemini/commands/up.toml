@@ -1,0 +1,2 @@
+description = "Levanta todos los servicios de Judiscribe con Docker Compose"
+prompt = "!{cd Judiscribe/backend && docker compose up -d}"

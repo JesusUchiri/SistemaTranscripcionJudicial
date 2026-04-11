@@ -1,5 +1,5 @@
 """
-Servicio de autenticación: JWT + bcrypt.
+Servicio de autenticación: JWT + bcrypt + Google OAuth.
 Access token (15min) + Refresh token (7d) con httpOnly cookie.
 """
 import uuid
@@ -10,6 +10,8 @@ import bcrypt
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 from app.config import settings
 from app.models.usuario import Usuario
@@ -85,3 +87,49 @@ async def authenticate_user(
 async def get_user_by_id(db: AsyncSession, user_id: uuid.UUID) -> Optional[Usuario]:
     result = await db.execute(select(Usuario).where(Usuario.id == user_id))
     return result.scalar_one_or_none()
+
+
+async def authenticate_google_user(
+    db: AsyncSession, google_id_token: str
+) -> Optional[Usuario]:
+    """Verifica el token de Google y devuelve el usuario (lo crea si no existe)."""
+    try:
+        # Si no hay ID de cliente configurado, lanzamos error informativo
+        if not settings.GOOGLE_CLIENT_ID:
+            print("GOOGLE_CLIENT_ID no está configurado.")
+            return None
+
+        # Verificar el token con Google
+        idinfo = id_token.verify_oauth2_token(
+            google_id_token, google_requests.Request(), settings.GOOGLE_CLIENT_ID
+        )
+
+        email = idinfo["email"]
+        nombre = idinfo.get("name", email.split("@")[0])
+
+        # Buscar usuario por email
+        result = await db.execute(select(Usuario).where(Usuario.email == email))
+        user = result.scalar_one_or_none()
+
+        if user is None:
+            # Crear usuario nuevo como transcriptor (digitador) por defecto
+            user = Usuario(
+                email=email,
+                nombre=nombre,
+                # Password aleatorio para cumplir con la restricción de NOT NULL
+                password_hash=hash_password(str(uuid.uuid4())),
+                rol="transcriptor",
+                activo=True
+            )
+            db.add(user)
+            await db.flush()
+            await db.refresh(user)
+        
+        if not user.activo:
+            return None
+            
+        return user
+
+    except Exception as e:
+        print(f"Error en Google Auth: {e}")
+        return None

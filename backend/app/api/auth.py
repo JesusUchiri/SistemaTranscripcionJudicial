@@ -1,5 +1,5 @@
 """
-Endpoints de autenticación: login, register, refresh.
+Endpoints de autenticación: login, google, register, refresh.
 """
 import json
 from typing import Annotated
@@ -14,12 +14,14 @@ from app.database import get_db
 from app.models.usuario import Usuario
 from app.schemas.auth import (
     LoginRequest,
+    GoogleLoginRequest,
     RegisterRequest,
     TokenResponse,
     UsuarioResponse,
 )
 from app.services.auth_service import (
     authenticate_user,
+    authenticate_google_user,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -64,6 +66,36 @@ async def login(
         secure=is_production,
         samesite="none" if is_production else "lax",
         max_age=7 * 24 * 3600,  # 7 days
+    )
+
+    return TokenResponse(access_token=access_token)
+
+
+@router.post("/google", response_model=TokenResponse)
+async def google_login(
+    request: GoogleLoginRequest,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Autenticación con Google ID Token."""
+    user = await authenticate_google_user(db, request.id_token)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Autenticación de Google fallida o usuario inactivo",
+        )
+
+    access_token = create_access_token(user.id, user.rol)
+    refresh_token = create_refresh_token(user.id)
+
+    is_production = settings.ENVIRONMENT == "production"
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=is_production,
+        samesite="none" if is_production else "lax",
+        max_age=7 * 24 * 3600,
     )
 
     return TokenResponse(access_token=access_token)

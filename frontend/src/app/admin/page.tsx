@@ -2,13 +2,27 @@
 
 /**
  * Panel de Administración — Solo para administradores.
- * Permite gestionar usuarios y ver estadísticas de uso (conteo y costo).
+ * Permite gestionar usuarios y ver estadísticas de uso.
  */
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import api from '@/lib/api'
 import { AuthGuard } from '@/components/auth/AuthGuard'
 import { useAuthStore } from '@/stores/authStore'
+import { motion } from 'framer-motion'
+import { 
+    Users, 
+    Zap, 
+    Cpu, 
+    DollarSign, 
+    Trash2, 
+    Shield, 
+    UserCircle,
+    CheckCircle,
+    XCircle,
+    ChevronDown,
+    Loader2
+} from 'lucide-react'
 
 interface UsuarioStats {
     id: string
@@ -24,15 +38,21 @@ interface UsuarioStats {
     costo_total_usd: number
 }
 
+const ROLES = [
+    { value: 'transcriptor', label: 'Digitador' },
+    { value: 'supervisor', label: 'Supervisor' },
+    { value: 'admin', label: 'Administrador' },
+]
+
 export default function AdminDashboard() {
     const router = useRouter()
-    const { logout, user, isLoading: authLoading } = useAuthStore()
+    const { logout, user } = useAuthStore()
     const [usuarios, setUsuarios] = useState<UsuarioStats[]>([])
     const [loading, setLoading] = useState(true)
+    const [updatingId, setUpdatingId] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
 
     useEffect(() => {
-        // Solo cargar datos si el usuario ya está confirmado como admin
         if (user && user.rol === 'admin') {
             fetchUsuarios()
         }
@@ -45,7 +65,6 @@ export default function AdminDashboard() {
             setUsuarios(data.items || [])
             setError(null)
         } catch (err: any) {
-            console.error('Error fetching users:', err)
             setError(err.response?.data?.detail || 'Error al cargar usuarios')
         } finally {
             setLoading(false)
@@ -54,10 +73,25 @@ export default function AdminDashboard() {
 
     const handleToggleActive = async (userId: string) => {
         try {
+            setUpdatingId(userId)
             const { data } = await api.patch(`/api/users/${userId}/toggle-active`)
             setUsuarios(prev => prev.map(u => u.id === userId ? data : u))
         } catch (err: any) {
             alert(err.response?.data?.detail || 'Error al cambiar estado')
+        } finally {
+            setUpdatingId(null)
+        }
+    }
+
+    const handleChangeRole = async (userId: string, newRole: string) => {
+        try {
+            setUpdatingId(userId)
+            const { data } = await api.patch(`/api/users/${userId}/role`, { rol: newRole })
+            setUsuarios(prev => prev.map(u => u.id === userId ? data : u))
+        } catch (err: any) {
+            alert(err.response?.data?.detail || 'Error al cambiar rol')
+        } finally {
+            setUpdatingId(null)
         }
     }
 
@@ -73,163 +107,167 @@ export default function AdminDashboard() {
 
     const handleLogout = async () => {
         await logout()
-        window.location.href = '/login'
+        router.replace('/login')
     }
 
-    // Totales globales (excluir admins)
+    // Totales globales
     const noAdmins = usuarios.filter(u => u.rol !== 'admin')
     const totalTranscripciones = noAdmins.reduce((acc, u) => acc + u.transcripciones_count, 0)
     const totalDeepgram = noAdmins.reduce((acc, u) => acc + u.costo_deepgram_usd, 0)
     const totalClaude = noAdmins.reduce((acc, u) => acc + u.costo_claude_usd, 0)
-    const totalCosto = totalDeepgram + totalClaude
     const totalUsuarios = usuarios.length
 
     return (
         <AuthGuard requiredRole="admin">
-            <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
-                {/* Header Admin */}
-                <header className="px-4 sm:px-8 py-4 sm:py-6 flex flex-col sm:flex-row items-center justify-between gap-4"
-                    style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-surface)' }}>
+            <div className="min-h-screen bg-[#FDFCFB] text-[#1A1A1A]">
+                {/* Header Custom para Admin */}
+                <header className="px-8 py-4 bg-white border-b border-[#1B3A5C]/10 flex items-center justify-between sticky top-0 z-30">
                     <div className="flex items-center gap-4">
-                        <div className="logo-monogram shrink-0" style={{ background: 'var(--accent-primary)', color: 'white' }}>A</div>
+                        <div className="w-10 h-10 bg-[#1B3A5C] text-white flex items-center justify-center rounded-xl font-bold text-xl">
+                            A
+                        </div>
                         <div>
-                            <h1 className="text-lg sm:text-xl font-bold tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}>
-                                Panel de Control
-                            </h1>
-                            <p className="text-xs sm:text-sm" style={{ color: 'var(--text-muted)' }}>Administración de Usuarios y Recursos</p>
+                            <h1 className="text-lg font-bold text-[#1B3A5C] tracking-tight">Consola de Administración</h1>
+                            <p className="text-[10px] uppercase tracking-widest text-[#A68246] font-bold">JudiScribe Control</p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
-                        <div className="text-right hidden sm:block">
-                            <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{user?.nombre}</p>
-                            <p className="text-xs uppercase tracking-wider font-bold" style={{ color: 'var(--accent-primary)' }}>Administrador</p>
+                    
+                    <div className="flex items-center gap-6">
+                        <div className="hidden sm:flex items-center gap-3 pr-6 border-r border-[#1B3A5C]/10">
+                            <div className="text-right">
+                                <p className="text-xs font-bold text-[#1B3A5C]">{user?.nombre}</p>
+                                <p className="text-[10px] text-[#A68246] font-bold uppercase tracking-tighter">Super Admin</p>
+                            </div>
+                            <div className="w-8 h-8 bg-[#1B3A5C]/5 rounded-full flex items-center justify-center">
+                                <Shield className="w-4 h-4 text-[#1B3A5C]/40" />
+                            </div>
                         </div>
-                        <button onClick={handleLogout} className="btn-secondary">
-                            Cerrar Sesión
+                        <button 
+                            onClick={handleLogout}
+                            className="text-xs font-bold text-[#1B3A5C]/40 hover:text-red-500 transition-colors uppercase tracking-widest"
+                        >
+                            Salir
                         </button>
                     </div>
                 </header>
 
-                <main className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
-                    {/* Stats de Uso Global */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6 mb-10">
+                <main className="max-w-7xl mx-auto px-8 py-10">
+                    {/* Stat Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
                         {[
-                            { label: 'Usuarios', value: totalUsuarios },
-                            { label: 'Transcripciones', value: totalTranscripciones },
-                            { label: 'Costo Deepgram', value: `$${totalDeepgram.toFixed(4)}`, sub: 'USD · Costo exacto API' },
-                            { label: 'Costo Claude', value: `$${totalClaude.toFixed(4)}`, sub: 'USD · Costo exacto API' },
-                        ].map((stat) => (
-                            <div key={stat.label} className="stat-card animate-fade-in" style={{ borderLeft: '4px solid var(--accent-primary)' }}>
-                                <span className="stat-card__value text-2xl sm:text-3xl">{stat.value}</span>
-                                <span className="stat-card__label text-xs uppercase tracking-widest">{stat.label}</span>
-                                {stat.sub && <span className="text-[10px] opacity-50 block mt-1">{stat.sub}</span>}
-                            </div>
+                            { label: 'Usuarios', value: totalUsuarios, icon: <Users className="w-4 h-4" /> },
+                            { label: 'Transcripciones', value: totalTranscripciones, icon: <Zap className="w-4 h-4" /> },
+                            { label: 'Costo Deepgram', value: `$${totalDeepgram.toFixed(3)}`, icon: <Cpu className="w-4 h-4" /> },
+                            { label: 'Costo Claude', value: `$${totalClaude.toFixed(3)}`, icon: <DollarSign className="w-4 h-4" /> },
+                        ].map((stat, i) => (
+                            <motion.div 
+                                key={stat.label}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: i * 0.1 }}
+                                className="bg-white p-6 rounded-3xl border border-[#1B3A5C]/5 shadow-sm hover:shadow-md transition-all group"
+                            >
+                                <div className="flex items-center justify-between mb-4">
+                                    <div className="w-8 h-8 bg-[#1B3A5C]/5 text-[#1B3A5C]/40 rounded-lg flex items-center justify-center group-hover:bg-[#A68246]/10 group-hover:text-[#A68246] transition-colors">
+                                        {stat.icon}
+                                    </div>
+                                    <span className="text-[10px] font-bold text-[#1B3A5C]/20 uppercase tracking-widest">Global</span>
+                                </div>
+                                <div className="text-2xl font-bold text-[#1B3A5C] mb-1">{stat.value}</div>
+                                <div className="text-[10px] font-bold text-[#1B3A5C]/40 uppercase tracking-widest">{stat.label}</div>
+                            </motion.div>
                         ))}
                     </div>
 
-                    {/* Tabla de Usuarios */}
-                    <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-base sm:text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                            Gestión de Usuarios
-                        </h2>
-                        <button
-                            onClick={() => window.location.href = '/admin/nuevo-usuario'}
-                            className="btn-primary">
-                            + Nuevo Usuario
-                        </button>
-                    </div>
+                    {/* Table Section */}
+                    <div className="bg-white rounded-[32px] border border-[#1B3A5C]/5 shadow-xl shadow-[#1B3A5C]/5 overflow-hidden">
+                        <div className="px-8 py-6 border-b border-[#1B3A5C]/5 flex items-center justify-between">
+                            <h2 className="text-sm font-bold text-[#1B3A5C] uppercase tracking-widest">Listado de Usuarios</h2>
+                            <button 
+                                onClick={() => router.push('/admin/nuevo-usuario')}
+                                className="px-4 py-2 bg-[#1B3A5C] text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all shadow-lg shadow-[#1B3A5C]/10"
+                            >
+                                + Nuevo Usuario
+                            </button>
+                        </div>
 
-                    {error && (
-                        <div className="p-4 mb-6 rounded-xl border border-red-200 bg-red-50 text-red-600 text-sm">
-                            {error}
-                        </div>
-                    )}
-
-                    {loading ? (
-                        <div className="space-y-3">
-                            {[1, 2, 3, 4, 5].map((i) => (
-                                <div key={i} className="h-16 rounded-xl skeleton-shimmer" />
-                            ))}
-                        </div>
-                    ) : usuarios.length === 0 ? (
-                        <div className="rounded-2xl p-16 text-center" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}>
-                            <p style={{ color: 'var(--text-muted)' }}>No hay usuarios registrados.</p>
-                        </div>
-                    ) : (
-                        <div className="rounded-2xl overflow-hidden border border-subtle" style={{ background: 'var(--bg-surface)' }}>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm text-left">
-                                    <thead>
-                                        <tr style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}>
-                                            <th className="px-6 py-4 font-medium" style={{ color: 'var(--text-muted)' }}>Usuario</th>
-                                            <th className="px-6 py-4 font-medium" style={{ color: 'var(--text-muted)' }}>Rol</th>
-                                            <th className="px-6 py-4 font-medium" style={{ color: 'var(--text-muted)' }}>Estado</th>
-                                            <th className="px-6 py-4 font-medium text-center" style={{ color: 'var(--text-muted)' }}>Transcrip.</th>
-                                            <th className="px-6 py-4 font-medium text-right hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>Deepgram</th>
-                                            <th className="px-6 py-4 font-medium text-right hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>Claude</th>
-                                            <th className="px-6 py-4 font-medium text-right" style={{ color: 'var(--text-muted)' }}>Total USD</th>
-                                            <th className="px-6 py-4 font-medium text-right" style={{ color: 'var(--text-muted)' }}>Acciones</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-subtle">
-                                        {usuarios.map((u) => (
-                                            <tr key={u.id} className="hover:bg-black/5 transition-colors">
-                                                <td className="px-6 py-4">
-                                                    <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{u.nombre}</div>
-                                                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{u.email}</div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                                        u.rol === 'admin' ? 'bg-purple-100 text-purple-700' : 
-                                                        u.rol === 'supervisor' ? 'bg-blue-100 text-blue-700' : 
-                                                        'bg-gray-100 text-gray-700'
-                                                    }`}>
-                                                        {u.rol}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <button 
-                                                        onClick={() => handleToggleActive(u.id)}
-                                                        className={`px-2 py-1 rounded-full text-[10px] font-bold ${
-                                                            u.activo ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                                        }`}
-                                                    >
-                                                        {u.activo ? 'ACTIVO' : 'INACTIVO'}
-                                                    </button>
-                                                </td>
-                                                <td className="px-6 py-4 text-center font-mono" style={{ color: 'var(--text-primary)' }}>
-                                                    {u.rol === 'admin' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : u.transcripciones_count}
-                                                </td>
-                                                <td className="px-6 py-4 text-right font-mono hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>
-                                                    {u.rol === 'admin' ? '—' : `$${u.costo_deepgram_usd.toFixed(4)}`}
-                                                </td>
-                                                <td className="px-6 py-4 text-right font-mono hidden sm:table-cell" style={{ color: 'var(--text-muted)' }}>
-                                                    {u.rol === 'admin' ? '—' : `$${u.costo_claude_usd.toFixed(4)}`}
-                                                </td>
-                                                <td className="px-6 py-4 text-right font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
-                                                    {u.rol === 'admin' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : `$${u.costo_total_usd.toFixed(4)}`}
-                                                </td>
-                                                <td className="px-6 py-4 text-right">
-                                                    <div className="flex justify-end gap-2">
-                                                        <button 
-                                                            disabled={u.id === user?.id}
-                                                            onClick={() => handleDeleteUser(u.id)}
-                                                            className="p-2 hover:bg-red-50 text-red-500 rounded-lg transition-colors disabled:opacity-30"
-                                                            title="Eliminar usuario"
-                                                        >
-                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                                <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/>
-                                                            </svg>
-                                                        </button>
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="bg-[#1B3A5C]/[0.02]">
+                                        <th className="px-8 py-4 text-left text-[10px] font-bold text-[#1B3A5C]/30 uppercase tracking-widest">Usuario</th>
+                                        <th className="px-8 py-4 text-left text-[10px] font-bold text-[#1B3A5C]/30 uppercase tracking-widest">Estado</th>
+                                        <th className="px-8 py-4 text-left text-[10px] font-bold text-[#1B3A5C]/30 uppercase tracking-widest">Rol del Sistema</th>
+                                        <th className="px-8 py-4 text-right text-[10px] font-bold text-[#1B3A5C]/30 uppercase tracking-widest">Costo Acumulado</th>
+                                        <th className="px-8 py-4 text-right text-[10px] font-bold text-[#1B3A5C]/30 uppercase tracking-widest">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[#1B3A5C]/5">
+                                    {usuarios.map((u) => (
+                                        <tr key={u.id} className="hover:bg-[#1B3A5C]/[0.01] transition-colors group">
+                                            <td className="px-8 py-5">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-9 h-9 bg-gradient-to-br from-[#1B3A5C]/5 to-[#A68246]/5 rounded-xl flex items-center justify-center font-bold text-[#1B3A5C]/40 text-xs">
+                                                        {u.nombre.charAt(0)}
                                                     </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                                                    <div>
+                                                        <div className="text-xs font-bold text-[#1B3A5C]">{u.nombre}</div>
+                                                        <div className="text-[10px] text-[#1B3A5C]/40">{u.email}</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="px-8 py-5">
+                                                <button 
+                                                    onClick={() => handleToggleActive(u.id)}
+                                                    disabled={u.id === user?.id || updatingId === u.id}
+                                                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
+                                                        u.activo 
+                                                        ? 'bg-green-50 text-green-600 hover:bg-green-100' 
+                                                        : 'bg-red-50 text-red-600 hover:bg-red-100'
+                                                    } disabled:opacity-50`}
+                                                >
+                                                    {updatingId === u.id ? <Loader2 className="w-3 h-3 animate-spin" /> : (u.activo ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />)}
+                                                    {u.activo ? 'ACTIVO' : 'INACTIVO'}
+                                                </button>
+                                            </td>
+                                            <td className="px-8 py-5">
+                                                <div className="relative inline-block">
+                                                    <select 
+                                                        value={u.rol}
+                                                        onChange={(e) => handleChangeRole(u.id, e.target.value)}
+                                                        disabled={u.id === user?.id || updatingId === u.id}
+                                                        className="appearance-none bg-[#1B3A5C]/5 border-none rounded-xl px-4 py-2 pr-10 text-[10px] font-bold text-[#1B3A5C] focus:ring-2 focus:ring-[#A68246]/20 transition-all outline-none disabled:opacity-50"
+                                                    >
+                                                        {ROLES.map(r => (
+                                                            <option key={r.value} value={r.value}>{r.label.toUpperCase()}</option>
+                                                        ))}
+                                                    </select>
+                                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-[#1B3A5C]/30 pointer-events-none" />
+                                                </div>
+                                            </td>
+                                            <td className="px-8 py-5 text-right">
+                                                <div className="text-xs font-mono font-bold text-[#1B3A5C]">
+                                                    ${u.rol === 'admin' ? '0.000' : u.costo_total_usd.toFixed(3)}
+                                                </div>
+                                                <div className="text-[9px] text-[#1B3A5C]/30 uppercase font-bold tracking-tighter">
+                                                    {u.transcripciones_count} transcripciones
+                                                </div>
+                                            </td>
+                                            <td className="px-8 py-5 text-right">
+                                                <button 
+                                                    onClick={() => handleDeleteUser(u.id)}
+                                                    disabled={u.id === user?.id || updatingId === u.id}
+                                                    className="p-2 text-[#1B3A5C]/20 hover:text-red-500 transition-colors disabled:opacity-10"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
-                    )}
+                    </div>
                 </main>
             </div>
         </AuthGuard>

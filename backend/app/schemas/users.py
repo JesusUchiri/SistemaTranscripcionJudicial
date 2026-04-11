@@ -27,3 +27,7 @@ class UsuarioStats(BaseModel):
 class UsuarioListResponse(BaseModel):
     items: list[UsuarioStats]
     total: int
+
+
+class UpdateRoleRequest(BaseModel):
+    rol: str

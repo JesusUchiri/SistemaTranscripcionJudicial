@@ -3,11 +3,14 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuthStore } from '@/stores/authStore'
+import { GoogleLogin } from '@react-oauth/google'
+import { motion } from 'framer-motion'
+import { Gavel, ShieldCheck, Mail, Lock, Loader2 } from 'lucide-react'
 
 function LoginForm() {
     const router = useRouter()
     const searchParams = useSearchParams()
-    const { login, isLoading, error, user } = useAuthStore()
+    const { login, googleLogin, isLoading, error, user } = useAuthStore()
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
 
@@ -17,25 +20,29 @@ function LoginForm() {
             if (user.rol === 'admin') {
                 router.replace('/admin')
             } else {
-                const redirect = searchParams.get('redirect') || '/'
-                router.push(redirect)
+                router.replace('/dashboard')
             }
         }
-    }, [user, router, searchParams])
+    }, [user, router])
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         const success = await login({ email, password })
         if (success) {
-            // El store ya cargó al usuario antes de devolver success: true
             const userState = useAuthStore.getState()
-            const currentUser = userState.user
-            
-            if (currentUser?.rol === 'admin') {
+            if (userState.user?.rol === 'admin') {
                 router.replace('/admin')
             } else {
-                const redirect = searchParams.get('redirect') || '/'
-                router.push(redirect)
+                router.replace('/dashboard')
+            }
+        }
+    }
+
+    const handleGoogleSuccess = async (response: any) => {
+        if (response.credential) {
+            const success = await googleLogin(response.credential)
+            if (success) {
+                router.replace('/dashboard')
             }
         }
     }
@@ -51,172 +58,141 @@ function LoginForm() {
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
-            {/* Background texture */}
-            <div
-                className="absolute inset-0 opacity-[0.03]"
-                style={{
-                    backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-                }}
-            />
+        <div className="min-h-screen flex items-center justify-center bg-[#FDFCFB] p-6 relative overflow-hidden">
+            {/* ── Background Elements ─────────────────────── */}
+            <div className="absolute inset-0 -z-10">
+                <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#A68246]/5 rounded-full blur-[120px]" />
+                <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-[#1B3A5C]/5 rounded-full blur-[120px]" />
+            </div>
 
-            {/* Gradient orb */}
-            <div className="absolute top-1/4 -left-32 w-96 h-96 rounded-full opacity-10"
-                style={{ background: 'radial-gradient(circle, var(--accent-gold), transparent 70%)' }}
-            />
-
-            <div className="relative z-10 w-full max-w-md px-4 sm:px-6">
-                {/* Logo / Brand */}
-                <div className="text-center mb-6 sm:mb-10 animate-fade-in">
-                    <div className="logo-monogram mx-auto mb-4 sm:mb-6" style={{ width: '52px', height: '52px', fontSize: '22px', borderRadius: '12px' }}>
-                        J
+            <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full max-w-md"
+            >
+                {/* Logo & Header */}
+                <div className="text-center mb-10">
+                    <div className="inline-flex items-center justify-center w-16 h-16 bg-[#1B3A5C] text-white rounded-2xl shadow-xl mb-6">
+                        <Gavel className="w-8 h-8" />
                     </div>
-                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}>
-                        JudiScribe
+                    <h1 className="text-3xl font-bold text-[#1B3A5C] tracking-tight" style={{ fontFamily: 'var(--font-display)' }}>
+                        Acceso Judicial
                     </h1>
-                    <p className="mt-2 text-xs sm:text-sm" style={{ color: 'var(--text-muted)' }}>
-                        Transcripción Judicial Inteligente
-                    </p>
-                    <p className="text-[10px] sm:text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-                        Corte Superior de Justicia del Cusco
+                    <p className="text-[#1B3A5C]/60 mt-2 text-sm uppercase tracking-widest font-bold">
+                        JudiScribe Cusco
                     </p>
                 </div>
 
-                {/* Login Card */}
-                <div className="rounded-2xl p-6 sm:p-8 animate-fade-in"
-                    style={{
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border-subtle)',
-                        boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3)',
-                        animationDelay: '0.1s',
-                    }}>
-
-                    <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
-                        {/* Email */}
-                        <div>
-                            <label className="block text-[10px] sm:text-xs font-medium mb-1.5 sm:mb-2 uppercase tracking-wider"
-                                style={{ color: 'var(--text-muted)' }}>
-                                Correo electrónico
+                {/* Main Card */}
+                <div className="bg-white rounded-[32px] p-8 shadow-2xl shadow-[#1B3A5C]/5 border border-[#A68246]/10">
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C]/40 ml-1">
+                                Correo Institucional
                             </label>
-                            <input
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                required
-                                placeholder="digitador@pj.gob.pe"
-                                className="w-full px-4 py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm outline-none transition-all duration-200 focus:ring-2"
-                                style={{
-                                    background: 'var(--bg-primary)',
-                                    border: '1px solid var(--border-default)',
-                                    color: 'var(--text-primary)',
-                                    caretColor: 'var(--accent-gold)',
-                                }}
-                            />
+                            <div className="relative">
+                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#1B3A5C]/30" />
+                                <input
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                    placeholder="usuario@pj.gob.pe"
+                                    className="w-full pl-11 pr-4 py-4 bg-[#1B3A5C]/5 border-none rounded-2xl text-sm focus:ring-2 focus:ring-[#A68246]/20 transition-all outline-none"
+                                />
+                            </div>
                         </div>
 
-                        {/* Password */}
-                        <div>
-                            <label className="block text-[10px] sm:text-xs font-medium mb-1.5 sm:mb-2 uppercase tracking-wider"
-                                style={{ color: 'var(--text-muted)' }}>
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C]/40 ml-1">
                                 Contraseña
                             </label>
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                required
-                                placeholder="••••••••"
-                                className="w-full px-4 py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm outline-none transition-all duration-200 focus:ring-2"
-                                style={{
-                                    background: 'var(--bg-primary)',
-                                    border: '1px solid var(--border-default)',
-                                    color: 'var(--text-primary)',
-                                    caretColor: 'var(--accent-gold)',
-                                }}
-                            />
+                            <div className="relative">
+                                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#1B3A5C]/30" />
+                                <input
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    required
+                                    placeholder="••••••••"
+                                    className="w-full pl-11 pr-4 py-4 bg-[#1B3A5C]/5 border-none rounded-2xl text-sm focus:ring-2 focus:ring-[#A68246]/20 transition-all outline-none"
+                                />
+                            </div>
                         </div>
 
-                        {/* Error */}
                         {error && (
-                            <div className="px-4 py-3 rounded-xl text-sm flex items-center gap-2"
-                                style={{ background: 'rgba(220, 38, 38, 0.08)', color: 'var(--danger)', border: '1px solid rgba(220, 38, 38, 0.2)' }}>
-                                <span style={{ fontWeight: 600 }}>Error:</span> {error}
-                            </div>
+                            <motion.div 
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="p-4 bg-red-50 text-red-600 rounded-2xl text-xs font-medium border border-red-100"
+                            >
+                                {error}
+                            </motion.div>
                         )}
 
-                        {/* Submit */}
                         <button
                             type="submit"
                             disabled={isLoading}
-                            className="btn-primary w-full py-3.5 text-sm uppercase tracking-wide disabled:opacity-50">
-                            {isLoading ? (
-                                <span className="flex items-center justify-center gap-2">
-                                    <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                    Verificando...
-                                </span>
-                            ) : (
-                                'Iniciar Sesión'
-                            )}
+                            className="w-full py-4 bg-[#1B3A5C] text-white rounded-2xl font-bold text-sm hover:brightness-110 transition-all shadow-lg shadow-[#1B3A5C]/20 flex items-center justify-center gap-2"
+                        >
+                            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Entrar al Sistema'}
                         </button>
                     </form>
 
-                    {/* Divider */}
-                    <div className="flex items-center gap-3 my-6">
-                        <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
-                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Acceso rápido</span>
-                        <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+                    <div className="relative my-8 text-center">
+                        <div className="absolute inset-0 flex items-center">
+                            <div className="w-full border-t border-[#1B3A5C]/5" />
+                        </div>
+                        <span className="relative px-4 bg-white text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C]/30">
+                            O continuar con
+                        </span>
                     </div>
 
-                    {/* Quick access buttons */}
-                    <div className="space-y-3">
+                    <div className="flex justify-center">
+                        <GoogleLogin
+                            onSuccess={handleGoogleSuccess}
+                            onError={() => {}}
+                            useOneTap
+                            theme="outline"
+                            shape="pill"
+                            width="100%"
+                        />
+                    </div>
+
+                    {/* Quick Access */}
+                    <div className="mt-8 grid grid-cols-2 gap-3">
                         <button
-                            type="button"
                             onClick={() => usarCredencialesDemo('digitador')}
-                            className="w-full px-4 py-3 rounded-xl text-sm transition-all text-left"
-                            style={{
-                                background: 'var(--bg-primary)',
-                                border: '1px solid var(--border-default)',
-                                color: 'var(--text-primary)',
-                            }}>
-                            <div className="font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>Digitador de Prueba</div>
-                            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>digitador@judiscribe.pe</div>
+                            className="p-3 bg-[#A68246]/5 border border-[#A68246]/10 rounded-2xl text-[10px] font-bold text-[#A68246] hover:bg-[#A68246]/10 transition-all"
+                        >
+                            Digitador Demo
                         </button>
                         <button
-                            type="button"
                             onClick={() => usarCredencialesDemo('admin')}
-                            className="w-full px-4 py-3 rounded-xl text-sm transition-all text-left"
-                            style={{
-                                background: 'var(--bg-primary)',
-                                border: '1px solid var(--border-default)',
-                                color: 'var(--text-primary)',
-                            }}>
-                            <div className="font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>Administrador</div>
-                            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>admin@judiscribe.pe</div>
+                            className="p-3 bg-[#1B3A5C]/5 border border-[#1B3A5C]/10 rounded-2xl text-[10px] font-bold text-[#1B3A5C] hover:bg-[#1B3A5C]/10 transition-all"
+                        >
+                            Admin Demo
                         </button>
                     </div>
                 </div>
 
-                {/* Footer */}
-                <p className="text-center text-xs mt-8" style={{ color: 'var(--text-muted)', opacity: 0.5 }}>
-                    Poder Judicial del Perú — Distrito Judicial de Cusco
-                </p>
-            </div>
+                <div className="mt-10 text-center space-y-4">
+                    <div className="flex items-center justify-center gap-2 text-[#1B3A5C]/40">
+                        <ShieldCheck className="w-4 h-4" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Conexión Segura SSL</span>
+                    </div>
+                    <p className="text-[10px] text-[#1B3A5C]/30 leading-relaxed max-w-[280px] mx-auto uppercase tracking-tighter">
+                        Propiedad de la Corte Superior de Justicia del Cusco. Uso restringido a personal autorizado.
+                    </p>
+                </div>
+            </motion.div>
         </div>
     )
 }
 
 export default function LoginPage() {
     return (
-        <Suspense fallback={
-            <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
-                <div className="text-center">
-                    <div className="logo-monogram mx-auto mb-4 animate-pulse" style={{ width: '48px', height: '48px', fontSize: '20px' }}>
-                        J
-                    </div>
-                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Cargando...</p>
-                </div>
-            </div>
-        }>
+        <Suspense fallback={null}>
             <LoginForm />
         </Suspense>
     )

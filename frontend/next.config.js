@@ -2,6 +2,9 @@
 // build: 2026-03-18
 const nextConfig = {
     reactStrictMode: true,
+    images: {
+        domains: ['images.unsplash.com'],
+    },
     eslint: {
         ignoreDuringBuilds: true,
     },

@@ -32,7 +32,7 @@ docker compose up -d --remove-orphans backend celery-worker frontend
 
 echo "⏳ Esperando que el backend esté healthy..."
 for i in $(seq 1 24); do
-    HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
+    HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/health 2>/dev/null || echo "000")
     if [ "$HTTP" = "200" ]; then
         echo "   ✅ Backend healthy (intento $i)"
         break

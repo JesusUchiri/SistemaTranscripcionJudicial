@@ -1,401 +1,298 @@
 'use client'
 
-/**
- * Página principal — Dashboard del Digitador Judicial.
- * Lista audiencias, acciones por fila, filtros rápidos.
- */
-import { useEffect, useState, useCallback } from 'react'
+import { motion } from 'framer-motion'
 import { useRouter } from 'next/navigation'
-import api from '@/lib/api'
-import type { Audiencia } from '@/types'
-import { AuthGuard } from '@/components/auth/AuthGuard'
 import { useAuthStore } from '@/stores/authStore'
+import { useEffect } from 'react'
+import { 
+    Mic2, 
+    FileText, 
+    Zap, 
+    ShieldCheck, 
+    Gavel, 
+    ArrowRight,
+    Cpu,
+    CheckCircle2
+} from 'lucide-react'
 
-const ESTADO_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
-    pendiente:   { bg: 'rgba(113,128,150,0.1)',  text: '#718096', label: 'Pendiente'   },
-    en_curso:    { bg: 'rgba(37,99,235,0.1)',    text: '#2563EB', label: 'En curso'    },
-    transcrita:  { bg: 'rgba(217,119,6,0.1)',    text: '#D97706', label: 'Transcrita'  },
-    en_revision: { bg: 'rgba(234,88,12,0.1)',    text: '#EA580C', label: 'En revisión' },
-    finalizada:  { bg: 'rgba(5,150,105,0.1)',    text: '#059669', label: 'Finalizada'  },
-}
-
-function saludo(): string {
-    const h = new Date().getHours()
-    if (h < 12) return 'Buenos días'
-    if (h < 19) return 'Buenas tardes'
-    return 'Buenas noches'
-}
-
-type Filtro = 'todas' | 'pendiente' | 'en_curso' | 'transcrita' | 'en_revision' | 'finalizada'
-
-const FILTROS: { key: Filtro; label: string }[] = [
-    { key: 'todas',       label: 'Todas'       },
-    { key: 'pendiente',   label: 'Pendiente'   },
-    { key: 'en_curso',    label: 'En curso'    },
-    { key: 'transcrita',  label: 'Transcrita'  },
-    { key: 'en_revision', label: 'En revisión' },
-    { key: 'finalizada',  label: 'Finalizada'  },
-]
-
-export default function DashboardPage() {
+export default function LandingPage() {
     const router = useRouter()
-    const { user, logout } = useAuthStore()
-    const [audiencias, setAudiencias] = useState<Audiencia[]>([])
-    const [loading, setLoading] = useState(true)
-    const [filtro, setFiltro] = useState<Filtro>('todas')
+    const { user } = useAuthStore()
 
-    useEffect(() => {
-        if (user?.rol === 'admin') {
-            router.replace('/admin')
-            return
+    // Si ya está logueado, permitir ir al dashboard
+    const handleAction = () => {
+        if (user) {
+            router.push('/dashboard')
+        } else {
+            router.push('/login')
         }
-        fetchAudiencias()
-    }, [user, router])
-
-    // Refresca cuando el usuario vuelve a la pestaña
-    useEffect(() => {
-        const refresh = () => fetchAudiencias()
-        const onVisibility = () => { if (document.visibilityState === 'visible') refresh() }
-        window.addEventListener('focus', refresh)
-        document.addEventListener('visibilitychange', onVisibility)
-        return () => {
-            window.removeEventListener('focus', refresh)
-            document.removeEventListener('visibilitychange', onVisibility)
-        }
-    }, [])
-
-    const fetchAudiencias = useCallback(async () => {
-        try {
-            const { data } = await api.get('/api/audiencias')
-            setAudiencias(data.items || [])
-        } catch {
-            setAudiencias([])
-        } finally {
-            setLoading(false)
-        }
-    }, [])
-
-    const handleLogout = async () => {
-        await logout()
-        router.replace('/login')
     }
 
-    // ── Stats ──────────────────────────────────────────
-    const hoy = new Date().toISOString().split('T')[0]
-    const stats = [
-        { label: 'Audiencias hoy',  value: audiencias.filter(a => a.fecha === hoy).length,                  highlight: false },
-        { label: 'En curso',        value: audiencias.filter(a => a.estado === 'en_curso').length,           highlight: true  },
-        { label: 'Pendientes',      value: audiencias.filter(a => a.estado === 'pendiente').length,          highlight: false },
-        { label: 'En revisión',     value: audiencias.filter(a => a.estado === 'en_revision').length,        highlight: true  },
-    ]
-
-    const listaFiltrada = filtro === 'todas'
-        ? audiencias
-        : audiencias.filter(a => a.estado === filtro)
-
-    // Audiencias con transcripción lista → puede ir a Acta
-    const tieneAccesoActa = (a: Audiencia) =>
-        a.estado === 'transcrita' || a.estado === 'en_revision' || a.estado === 'finalizada'
-
-    const rolLabel = user?.rol === 'transcriptor' ? 'Digitador Judicial'
-        : user?.rol === 'supervisor' ? 'Supervisor'
-        : user?.rol ?? ''
+    const fadeInUp = {
+        initial: { opacity: 0, y: 20 },
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0.6 }
+    }
 
     return (
-        <AuthGuard>
-            <div className="h-screen flex flex-col" style={{ background: 'var(--bg-primary)' }}>
-
-                {/* ── Header ──────────────────────────────────── */}
-                <header
-                    className="shrink-0 px-6 sm:px-8 py-3 flex items-center justify-between gap-4"
-                    style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-surface)' }}
-                >
-                    {/* Branding */}
+        <div className="min-h-screen bg-[#FDFCFB] text-[#1A1A1A] selection:bg-[#A68246]/20">
+            {/* ── Navigation ──────────────────────────────── */}
+            <nav className="fixed top-0 w-full z-50 bg-white/80 backdrop-blur-md border-b border-[#A68246]/10">
+                <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="logo-monogram shrink-0">J</div>
+                        <div className="w-10 h-10 bg-[#1B3A5C] text-[#FDFCFB] flex items-center justify-center rounded-xl font-bold text-xl shadow-lg shadow-[#1B3A5C]/20">
+                            J
+                        </div>
                         <div>
-                            <h1 className="text-sm font-bold tracking-tight"
-                                style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}>
+                            <span className="text-xl font-bold tracking-tight text-[#1B3A5C]" style={{ fontFamily: 'var(--font-display)' }}>
                                 JudiScribe
-                            </h1>
-                            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                Sistema de Transcripción Judicial · Cusco
-                            </p>
+                            </span>
+                            <span className="block text-[10px] uppercase tracking-widest text-[#A68246] font-bold">
+                                Justicia Inteligente
+                            </span>
                         </div>
                     </div>
+                    
+                    <div className="hidden md:flex items-center gap-8 text-sm font-medium text-[#1B3A5C]/70">
+                        <a href="#proceso" className="hover:text-[#A68246] transition-colors">Proceso</a>
+                        <a href="#tecnologia" className="hover:text-[#A68246] transition-colors">Tecnología</a>
+                        <a href="#seguridad" className="hover:text-[#A68246] transition-colors">Seguridad</a>
+                    </div>
 
-                    {/* User + logout */}
-                    <div className="flex items-center gap-3">
-                        <div className="hidden sm:block text-right">
-                            <p className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
-                                {user?.nombre}
-                            </p>
-                            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                {rolLabel}
-                            </p>
-                        </div>
-                        <button
-                            onClick={handleLogout}
-                            className="px-3 py-1.5 rounded-lg text-xs transition-colors"
-                            style={{
-                                background: 'var(--bg-secondary)',
-                                border: '1px solid var(--border-subtle)',
-                                color: 'var(--text-muted)',
-                            }}
+                    <button 
+                        onClick={handleAction}
+                        className="px-6 py-2.5 bg-[#1B3A5C] text-white rounded-full text-sm font-semibold hover:bg-[#1B3A5C]/90 transition-all shadow-md shadow-[#1B3A5C]/20"
+                    >
+                        {user ? 'Ir al Dashboard' : 'Acceso Judicial'}
+                    </button>
+                </div>
+            </nav>
+
+            {/* ── Hero Section ────────────────────────────── */}
+            <section className="relative pt-40 pb-20 overflow-hidden">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] bg-gradient-to-b from-[#A68246]/5 to-transparent rounded-full blur-3xl -z-10" />
+                
+                <div className="max-w-7xl mx-auto px-6 text-center">
+                    <motion.div 
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.8 }}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#1B3A5C]/5 border border-[#1B3A5C]/10 text-[#1B3A5C] text-xs font-bold uppercase tracking-widest mb-8"
+                    >
+                        <Zap className="w-3 h-3 text-[#A68246]" />
+                        Deepgram Nova-3 & Claude Sonnet
+                    </motion.div>
+
+                    <motion.h1 
+                        {...fadeInUp}
+                        className="text-5xl md:text-7xl font-bold text-[#1B3A5C] leading-[1.1] mb-8"
+                        style={{ fontFamily: 'var(--font-display)' }}
+                    >
+                        La voz de la justicia,<br />
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#A68246] to-[#1B3A5C]">transcrita con precisión.</span>
+                    </h1 >
+
+                    <motion.p 
+                        {...fadeInUp}
+                        transition={{ delay: 0.2 }}
+                        className="max-w-2xl mx-auto text-lg md:text-xl text-[#1B3A5C]/60 leading-relaxed mb-12"
+                    >
+                        Sistema especializado de transcripción en tiempo real y generación de actas para la Corte Superior de Justicia del Cusco. 
+                        Reduzca el tiempo de redacción en un 80%.
+                    </motion.p>
+
+                    <motion.div 
+                        {...fadeInUp}
+                        transition={{ delay: 0.3 }}
+                        className="flex flex-col sm:flex-row items-center justify-center gap-4"
+                    >
+                        <button 
+                            onClick={handleAction}
+                            className="w-full sm:w-auto px-8 py-4 bg-[#A68246] text-white rounded-2xl font-bold text-lg hover:brightness-110 transition-all shadow-xl shadow-[#A68246]/20 flex items-center justify-center gap-2"
                         >
-                            Cerrar sesión
+                            Comenzar ahora <ArrowRight className="w-5 h-5" />
                         </button>
-                    </div>
-                </header>
+                        <a 
+                            href="#proceso"
+                            className="w-full sm:w-auto px-8 py-4 bg-white text-[#1B3A5C] border border-[#1B3A5C]/10 rounded-2xl font-bold text-lg hover:bg-[#1B3A5C]/5 transition-all"
+                        >
+                            Ver demostración
+                        </a>
+                    </motion.div>
 
-                {/* ── Contenido principal (scrollable) ────────── */}
-                <main className="flex-1 min-h-0 overflow-y-auto">
-                    <div className="max-w-6xl mx-auto px-6 sm:px-8 py-8 space-y-8">
-
-                        {/* Saludo + acciones primarias */}
-                        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                            <div>
-                                <h2 className="text-xl font-bold"
-                                    style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}>
-                                    {saludo()}, {user?.nombre?.split(' ')[0]}.
-                                </h2>
-                                <p className="text-xs mt-1 capitalize" style={{ color: 'var(--text-muted)' }}>
-                                    {new Date().toLocaleDateString('es-PE', {
-                                        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-                                    })}
-                                </p>
-                            </div>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={() => router.push('/transcribir')}
-                                    className="px-4 py-2 rounded-xl text-xs font-medium transition-all hover:brightness-95"
-                                    style={{
-                                        background: 'var(--bg-surface)',
-                                        border: '1px solid var(--border-default)',
-                                        color: 'var(--text-secondary)',
-                                    }}
-                                >
-                                    Subir Audio
-                                </button>
-                                <button
-                                    onClick={() => router.push('/audiencia/nueva')}
-                                    className="px-5 py-2 rounded-xl text-xs font-semibold transition-all hover:brightness-110"
-                                    style={{
-                                        background: 'var(--accent-gold)',
-                                        color: 'white',
-                                        boxShadow: '0 2px 10px rgba(166,130,70,0.3)',
-                                    }}
-                                >
-                                    + Nueva Audiencia
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Stats */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                            {stats.map(s => (
-                                <div
-                                    key={s.label}
-                                    className="stat-card"
-                                    style={s.highlight && s.value > 0
-                                        ? { borderColor: 'rgba(166,130,70,0.35)' }
-                                        : {}
-                                    }
-                                >
-                                    <span
-                                        className="stat-card__value"
-                                        style={s.highlight && s.value > 0 ? { color: 'var(--accent-gold)' } : {}}
-                                    >
-                                        {s.value}
-                                    </span>
-                                    <span className="stat-card__label">{s.label}</span>
+                    {/* Dashboard Preview */}
+                    <motion.div 
+                        initial={{ opacity: 0, y: 40 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.5, duration: 1 }}
+                        className="mt-20 relative mx-auto max-w-5xl rounded-3xl border border-[#A68246]/20 shadow-2xl overflow-hidden bg-white"
+                    >
+                        <div className="absolute inset-0 bg-gradient-to-tr from-[#1B3A5C]/5 to-transparent" />
+                        <img 
+                            src="https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&q=80&w=2000" 
+                            alt="Justicia Cusco"
+                            className="w-full h-auto opacity-20 grayscale"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="w-[80%] h-[70%] bg-[#FDFCFB] rounded-xl shadow-2xl border border-[#A68246]/10 flex flex-col p-4">
+                                <div className="flex items-center gap-2 mb-4 border-b pb-2">
+                                    <div className="w-3 h-3 rounded-full bg-red-400" />
+                                    <div className="w-3 h-3 rounded-full bg-yellow-400" />
+                                    <div className="w-3 h-3 rounded-full bg-green-400" />
                                 </div>
-                            ))}
-                        </div>
-
-                        {/* Filtros + Actualizar */}
-                        <div className="flex items-center justify-between gap-4 flex-wrap">
-                            <div className="flex gap-1.5 flex-wrap">
-                                {FILTROS.map(f => {
-                                    const count = f.key === 'todas'
-                                        ? audiencias.length
-                                        : audiencias.filter(a => a.estado === f.key).length
-                                    const activo = filtro === f.key
-                                    return (
-                                        <button
-                                            key={f.key}
-                                            onClick={() => setFiltro(f.key)}
-                                            className="px-3 py-1 rounded-full text-[11px] font-medium transition-all"
-                                            style={{
-                                                background: activo ? 'var(--text-primary)' : 'var(--bg-surface)',
-                                                color: activo ? 'var(--bg-primary)' : 'var(--text-muted)',
-                                                border: `1px solid ${activo ? 'var(--text-primary)' : 'var(--border-subtle)'}`,
-                                            }}
-                                        >
-                                            {f.label}
-                                            {count > 0 && (
-                                                <span className={`ml-1.5 ${activo ? 'opacity-70' : 'opacity-50'}`}>
-                                                    {count}
-                                                </span>
-                                            )}
-                                        </button>
-                                    )
-                                })}
+                                <div className="space-y-3">
+                                    <div className="h-4 w-[40%] bg-[#1B3A5C]/10 rounded" />
+                                    <div className="h-4 w-full bg-[#1B3A5C]/5 rounded" />
+                                    <div className="h-4 w-[90%] bg-[#1B3A5C]/5 rounded" />
+                                    <div className="h-4 w-[95%] bg-[#1B3A5C]/5 rounded" />
+                                    <div className="flex gap-2">
+                                        <div className="h-8 w-24 bg-[#A68246]/20 rounded-lg" />
+                                        <div className="h-8 w-24 bg-[#1B3A5C]/10 rounded-lg" />
+                                    </div>
+                                </div>
                             </div>
-                            <button
-                                onClick={fetchAudiencias}
-                                className="text-[11px] px-3 py-1 rounded-lg transition-colors hover:brightness-95 shrink-0"
-                                style={{
-                                    color: 'var(--text-muted)',
-                                    border: '1px solid var(--border-subtle)',
-                                    background: 'var(--bg-surface)',
-                                }}
-                            >
-                                ↻ Actualizar
-                            </button>
                         </div>
+                    </motion.div>
+                </div>
+            </section>
 
-                        {/* Tabla de audiencias */}
-                        {loading ? (
-                            <div className="space-y-2">
-                                {[1, 2, 3].map(i => (
-                                    <div key={i} className="h-14 rounded-xl skeleton-shimmer" />
+            {/* ── Features Grid ───────────────────────────── */}
+            <section id="tecnologia" className="py-24 bg-[#1B3A5C]">
+                <div className="max-w-7xl mx-auto px-6">
+                    <div className="text-center mb-20">
+                        <h2 className="text-3xl md:text-5xl font-bold text-white mb-6" style={{ fontFamily: 'var(--font-display)' }}>
+                            Potencia Tecnológica al Servicio de la Ley
+                        </h2>
+                        <p className="text-white/60 text-lg max-w-2xl mx-auto">
+                            Combinamos los modelos de IA más avanzados para garantizar la fidelidad absoluta de cada palabra pronunciada en sala.
+                        </p>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-8">
+                        {[
+                            {
+                                icon: <Mic2 className="w-8 h-8 text-[#A68246]" />,
+                                title: "Transcripción Nova-3",
+                                desc: "Detección de voz de última generación con diarización de hablantes y latencia menor a 1 segundo."
+                            },
+                            {
+                                icon: <Cpu className="w-8 h-8 text-[#A68246]" />,
+                                title: "Claude AI Integration",
+                                desc: "Generación de actas estructuradas siguiendo los formatos oficiales del Poder Judicial peruano."
+                            },
+                            {
+                                icon: <ShieldCheck className="w-8 h-8 text-[#A68246]" />,
+                                title: "Seguridad Judicial",
+                                desc: "Encriptación de grado bancario y cumplimiento estricto de la ley de protección de datos personales."
+                            }
+                        ].map((f, i) => (
+                            <motion.div 
+                                key={i}
+                                initial={{ opacity: 0, y: 20 }}
+                                whileInView={{ opacity: 1, y: 0 }}
+                                viewport={{ once: true }}
+                                transition={{ delay: i * 0.1 }}
+                                className="p-8 rounded-3xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all group"
+                            >
+                                <div className="mb-6 group-hover:scale-110 transition-transform">{f.icon}</div>
+                                <h3 className="text-xl font-bold text-white mb-4">{f.title}</h3>
+                                <p className="text-white/60 leading-relaxed">{f.desc}</p>
+                            </motion.div>
+                        ))}
+                    </div>
+                </div>
+            </section>
+
+            {/* ── Process Section ─────────────────────────── */}
+            <section id="proceso" className="py-24">
+                <div className="max-w-7xl mx-auto px-6">
+                    <div className="grid lg:grid-cols-2 gap-20 items-center">
+                        <div>
+                            <span className="text-[#A68246] font-bold text-sm uppercase tracking-widest mb-4 block">El Flujo Judicial</span>
+                            <h2 className="text-4xl md:text-5xl font-bold text-[#1B3A5C] mb-8" style={{ fontFamily: 'var(--font-display)' }}>
+                                Diseñado por y para digitadores.
+                            </h2>
+                            
+                            <div className="space-y-8">
+                                {[
+                                    { step: "01", title: "Captura en Vivo", desc: "Grabe el audio directamente desde Meet o consola física." },
+                                    { step: "02", title: "Edición Inteligente", desc: "Corrija en tiempo real sobre un Canvas optimizado para la ley." },
+                                    { step: "03", title: "Generación de Acta", desc: "Un clic para transformar la transcripción en un documento oficial." }
+                                ].map((s, i) => (
+                                    <div key={i} className="flex gap-6">
+                                        <span className="text-3xl font-bold text-[#A68246]/30">{s.step}</span>
+                                        <div>
+                                            <h4 className="text-xl font-bold text-[#1B3A5C] mb-2">{s.title}</h4>
+                                            <p className="text-[#1B3A5C]/60">{s.desc}</p>
+                                        </div>
+                                    </div>
                                 ))}
                             </div>
-                        ) : listaFiltrada.length === 0 ? (
-                            <div
-                                className="rounded-2xl p-12 text-center"
-                                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
-                            >
-                                {audiencias.length === 0 ? (
-                                    <>
-                                        <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-                                            No hay audiencias registradas
-                                        </p>
-                                        <p className="text-xs mb-6" style={{ color: 'var(--text-muted)' }}>
-                                            Crea la primera sesión para comenzar a transcribir.
-                                        </p>
-                                        <button
-                                            onClick={() => router.push('/audiencia/nueva')}
-                                            className="px-5 py-2.5 rounded-xl text-sm font-semibold hover:brightness-110 transition-all"
-                                            style={{ background: 'var(--accent-gold)', color: 'white' }}
-                                        >
-                                            + Nueva Audiencia
-                                        </button>
-                                    </>
-                                ) : (
-                                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                        No hay audiencias con el filtro "{FILTROS.find(f => f.key === filtro)?.label}".
-                                    </p>
-                                )}
-                            </div>
-                        ) : (
-                            <div
-                                className="rounded-2xl overflow-hidden"
-                                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
-                            >
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm min-w-[700px]">
-                                        <thead>
-                                            <tr style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}>
-                                                {['Expediente', 'Tipo de Audiencia', 'Juzgado', 'Fecha / Hora', 'Estado', 'Costo API', 'Acciones'].map(h => (
-                                                    <th
-                                                        key={h}
-                                                        className="text-left px-5 py-3 text-[10px] font-semibold uppercase tracking-wider"
-                                                        style={{ color: 'var(--text-muted)' }}
-                                                    >
-                                                        {h}
-                                                    </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {listaFiltrada.map((a, idx) => {
-                                                const estadoCfg = ESTADO_CONFIG[a.estado] ?? ESTADO_CONFIG.pendiente
-                                                const esUltima = idx === listaFiltrada.length - 1
-                                                return (
-                                                    <tr
-                                                        key={a.id}
-                                                        onClick={() => router.push(`/audiencia/${a.id}`)}
-                                                        className="cursor-pointer transition-colors hover:bg-[rgba(166,130,70,0.04)]"
-                                                        style={!esUltima ? { borderBottom: '1px solid var(--border-subtle)' } : {}}
-                                                    >
-                                                        <td className="px-5 py-3.5">
-                                                            <span
-                                                                className="text-xs font-semibold"
-                                                                style={{
-                                                                    color: 'var(--text-primary)',
-                                                                    fontFamily: 'var(--font-mono)',
-                                                                }}
-                                                            >
-                                                                {a.expediente}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-5 py-3.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                                                            {a.tipo_audiencia}
-                                                        </td>
-                                                        <td className="px-5 py-3.5 text-xs max-w-[200px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                                            {a.juzgado}
-                                                        </td>
-                                                        <td className="px-5 py-3.5 text-xs whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
-                                                            {a.fecha}
-                                                            {a.hora_inicio && (
-                                                                <span className="ml-1.5 opacity-50">
-                                                                    {a.hora_inicio.slice(0, 5)}
-                                                                </span>
-                                                            )}
-                                                        </td>
-                                                        <td className="px-5 py-3.5">
-                                                            <span
-                                                                className="px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wide"
-                                                                style={{ background: estadoCfg.bg, color: estadoCfg.text }}
-                                                            >
-                                                                {estadoCfg.label}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-5 py-3.5 text-xs font-mono font-medium" style={{ color: 'var(--text-muted)' }}>
-                                                            ${((a.costo_deepgram_usd || 0.0) + (a.costo_claude_usd || 0.0)).toFixed(4)}
-                                                        </td>
-                                                        <td className="px-5 py-3.5" onClick={e => e.stopPropagation()}>
-                                                            <div className="flex items-center gap-2">
-                                                                <button
-                                                                    onClick={() => router.push(`/audiencia/${a.id}`)}
-                                                                    className="px-3 py-1 rounded-lg text-[11px] font-medium transition-all hover:brightness-95"
-                                                                    style={{
-                                                                        background: 'var(--bg-secondary)',
-                                                                        border: '1px solid var(--border-subtle)',
-                                                                        color: 'var(--text-secondary)',
-                                                                    }}
-                                                                >
-                                                                    Abrir
-                                                                </button>
-                                                                {tieneAccesoActa(a) && (
-                                                                    <button
-                                                                        onClick={() => router.push(`/audiencia/${a.id}/acta`)}
-                                                                        className="px-3 py-1 rounded-lg text-[11px] font-medium transition-all hover:brightness-110"
-                                                                        style={{
-                                                                            background: 'rgba(166,130,70,0.1)',
-                                                                            border: '1px solid rgba(166,130,70,0.25)',
-                                                                            color: 'var(--accent-gold)',
-                                                                        }}
-                                                                    >
-                                                                        Acta
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                )
-                                            })}
-                                        </tbody>
-                                    </table>
+                        </div>
+                        
+                        <div className="relative">
+                            <div className="absolute inset-0 bg-[#A68246]/10 rounded-full blur-3xl" />
+                            <div className="relative p-8 bg-white rounded-3xl border border-[#A68246]/20 shadow-2xl">
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-3 p-3 bg-[#1B3A5C]/5 rounded-xl border border-[#1B3A5C]/10">
+                                        <CheckCircle2 className="w-5 h-5 text-[#A68246]" />
+                                        <span className="text-sm font-medium text-[#1B3A5C]">Diccionario Jurídico Cusco v4.2</span>
+                                    </div>
+                                    <div className="flex items-center gap-3 p-3 bg-[#1B3A5C]/5 rounded-xl border border-[#1B3A5C]/10">
+                                        <CheckCircle2 className="w-5 h-5 text-[#A68246]" />
+                                        <span className="text-sm font-medium text-[#1B3A5C]">Plantillas Oficiales (Unipersonal/Sala)</span>
+                                    </div>
+                                    <div className="flex items-center gap-3 p-3 bg-[#1B3A5C]/5 rounded-xl border border-[#1B3A5C]/10">
+                                        <CheckCircle2 className="w-5 h-5 text-[#A68246]" />
+                                        <span className="text-sm font-medium text-[#1B3A5C]">Exportación DOCX/PDF Instantánea</span>
+                                    </div>
+                                </div>
+                                
+                                <div className="mt-8 pt-8 border-t border-[#A68246]/10 flex items-center justify-between">
+                                    <div className="flex -space-x-2">
+                                        {[1,2,3,4].map(i => (
+                                            <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-gray-200" />
+                                        ))}
+                                    </div>
+                                    <span className="text-xs text-[#1B3A5C]/40 font-bold uppercase tracking-wider">
+                                        +50 Digitadores activos
+                                    </span>
                                 </div>
                             </div>
-                        )}
-
+                        </div>
                     </div>
-                </main>
-            </div>
-        </AuthGuard>
+                </div>
+            </section>
+
+            {/* ── Footer ──────────────────────────────────── */}
+            <footer className="py-20 bg-[#1A1A1A] text-white">
+                <div className="max-w-7xl mx-auto px-6">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-10">
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-white text-[#1A1A1A] flex items-center justify-center rounded-lg font-bold">
+                                J
+                            </div>
+                            <span className="text-lg font-bold tracking-tight">
+                                JudiScribe
+                            </span>
+                        </div>
+                        
+                        <div className="flex gap-8 text-sm text-white/40">
+                            <p>© 2026 JudiScribe Judicial.</p>
+                            <p>Distrito Judicial de Cusco.</p>
+                        </div>
+
+                        <div className="flex gap-4">
+                            <button 
+                                onClick={handleAction}
+                                className="px-6 py-2 bg-white text-[#1A1A1A] rounded-full text-sm font-bold hover:bg-white/90 transition-all"
+                            >
+                                Iniciar Sesión
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </footer>
+        </div>
     )
 }

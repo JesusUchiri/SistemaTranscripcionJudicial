@@ -1,0 +1,2 @@
+description = "Muestra los logs del backend y frontend"
+prompt = "!{cd Judiscribe/backend && docker compose logs --tail=50 backend frontend}"

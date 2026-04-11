@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 horas — suficiente para una jornada judicial
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # ── Google OAuth ─────────────────────────────────────
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+
     # ── Audio ────────────────────────────────────────────
     # Ruta donde se guardan los WAV de cada audiencia. En producción montar un volumen
     # persistente (ej. Docker volume o bind mount) para no perder audios al reiniciar.

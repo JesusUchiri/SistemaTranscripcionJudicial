@@ -53,11 +53,11 @@ El alcance oficial del proyecto está definido en **informe.tex** (3 Niveles, 15
 
 ### Nivel 3 (Sprints 11–15)
 
-**Pendiente.** Incluye: mejoras UI/UX, corpus y aprendizaje del sistema, cierre, capacitación y soporte post-lanzamiento.
+**✅ En progreso.** Incluye: Mejoras UI/UX de alta fidelidad, Landing Page profesional, Integración completa con Google OAuth2, Gestión avanzada de roles (Digitador/Admin) y estabilización del sistema.
 
 ### Endpoints: implementados vs planeados
 
-- **Implementados:** Auth (login, refresh, me; register si existe). Audiencias: CRUD completo. Segmentos: GET y PUT bajo `/api/audiencias/{id}/segmentos`. Audio: GET `/api/audiencias/{id}/audio`. Hablantes: GET/PUT. Marcadores: POST, GET, DELETE. Frases: CRUD (router frases). Análisis y predicción: según router (analysis, prediction). WebSocket: `/ws/transcripcion/{audiencia_id}`.
+- **Implementados:** Auth (login, google, refresh, me). Audiencias: CRUD completo. Segmentos: GET y PUT bajo `/api/audiencias/{id}/segmentos`. Audio: GET `/api/audiencias/{id}/audio`. Hablantes: GET/PUT. Marcadores: POST, GET, DELETE. Frases: CRUD. Usuarios: Listado con stats, toggle activo, cambio de rol. WebSocket: `/ws/transcripcion/{audiencia_id}`.
 - **No implementados (planeados en informe / sección 6):** POST `/api/audiencias/{id}/generar-acta`, GET/PUT acta, POST acta/aprobar, POST exportar/docx, POST exportar/pdf, upload/start/stop para batch, batch-update de segmentos. Las rutas de actas y exportación no están registradas en el router actual; el modelo/tabla `actas` y los servicios acta_generator/document_export pueden no estar expuestos.
 
 La **sección 6 (API REST)** de este Readme describe el conjunto **objetivo** de endpoints; la lista anterior indica cuáles existen hoy en el código.
