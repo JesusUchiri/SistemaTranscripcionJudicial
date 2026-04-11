@@ -22,6 +22,7 @@ declare module '@tiptap/core' {
                 editedByUser?: boolean
             }) => ReturnType
             markAsEdited: (segmentId: string) => ReturnType
+            highlightActiveSegment: (segmentId: string) => ReturnType
         }
     }
 }
@@ -50,6 +51,10 @@ const SegmentMark = Mark.create<SegmentMarkOptions>({
                 default: false,
                 parseHTML: element => element.getAttribute('data-edited') === 'true',
             },
+            isActiveHighlight: {
+                default: false,
+                parseHTML: element => element.classList.contains('segment-active'),
+            }
         }
     },
 
@@ -62,10 +67,13 @@ const SegmentMark = Mark.create<SegmentMarkOptions>({
     },
 
     renderHTML({ HTMLAttributes }) {
-        const { segmentId, timestamp, editedByUser } = HTMLAttributes
-        const classes = ['segment-text', 'segment-clickable']
+        const { segmentId, timestamp, editedByUser, isActiveHighlight } = HTMLAttributes
+        const classes = ['segment-mark', 'segment-clickable']
         if (editedByUser) {
             classes.push('segment-edited')
+        }
+        if (isActiveHighlight) {
+            classes.push('segment-active')
         }
 
         return [
@@ -112,6 +120,38 @@ const SegmentMark = Mark.create<SegmentMarkOptions>({
                         }
                     })
                     return found
+                },
+            highlightActiveSegment:
+                (segmentId) =>
+                ({ tr, state, dispatch }) => {
+                    let modified = false
+                    state.doc.descendants((node, pos) => {
+                        if (node.isText) {
+                            const marks = node.marks
+                            marks.forEach((mark) => {
+                                if (mark.type.name === this.name) {
+                                    const isActive = mark.attrs.segmentId === segmentId
+                                    const hasActiveClass = mark.attrs.HTMLAttributes?.class?.includes('segment-active')
+                                    
+                                    // Solo actualizar si el estado de highlight cambió
+                                    if (isActive !== hasActiveClass) {
+                                        const newMark = mark.type.create({
+                                            ...mark.attrs,
+                                            // TipTap no suele exponer classes dinámicas directo en attrs,
+                                            // pero podemos forzarlas en renderHTML si las guardamos.
+                                            // No obstante, la forma más limpia aquí es usar un atributo dedicado.
+                                            isActiveHighlight: isActive
+                                        })
+                                        tr.removeMark(pos, pos + node.nodeSize, mark)
+                                        tr.addMark(pos, pos + node.nodeSize, newMark)
+                                        modified = true
+                                    }
+                                }
+                            })
+                        }
+                    })
+                    if (dispatch && modified) dispatch(tr)
+                    return modified
                 },
         }
     },
