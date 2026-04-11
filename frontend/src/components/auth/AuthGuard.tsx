@@ -20,27 +20,33 @@ export function AuthGuard({ children, requiredRole }: AuthGuardProps) {
     const [isReady, setIsReady] = useState(false)
 
     useEffect(() => {
+        let isMounted = true
+
         const verify = async () => {
-            // 1. Si no hay token, fuera.
             if (!token) {
-                router.push(`/login?redirect=${encodeURIComponent(pathname)}`)
+                router.replace(`/login?redirect=${encodeURIComponent(pathname)}`)
                 return
             }
 
-            // 2. Si hay token pero no hay usuario, intentar cargarlo una vez más
-            if (token && !user && !isLoading) {
+            if (!user && !isLoading) {
                 try {
                     await fetchUser()
                 } catch (err) {
-                    console.error('Error verificando sesión:', err)
-                    router.push(`/login?redirect=${encodeURIComponent(pathname)}`)
+                    if (isMounted) {
+                        router.replace(`/login?redirect=${encodeURIComponent(pathname)}`)
+                    }
                     return
                 }
             }
 
-            setIsReady(true)
+            if (isMounted) setIsReady(true)
         }
+
         verify()
+
+        return () => {
+            isMounted = false
+        }
     }, [token, user, isLoading, pathname, router, fetchUser])
 
     // 3. Mientras carga o verifica, mostrar splash screen

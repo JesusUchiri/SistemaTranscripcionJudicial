@@ -28,10 +28,17 @@ export default function RootLayout({
 
   return (
     <html lang="es" className={`${inter.variable} ${playfair.variable}`}>
+      <head>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      </head>
       <body className="antialiased font-sans">
-        <GoogleOAuthProvider clientId={googleClientId}>
-          {children}
-        </GoogleOAuthProvider>
+        {googleClientId ? (
+          <GoogleOAuthProvider clientId={googleClientId}>
+            {children}
+          </GoogleOAuthProvider>
+        ) : (
+          <>{children}</>
+        )}
       </body>
     </html>
   )

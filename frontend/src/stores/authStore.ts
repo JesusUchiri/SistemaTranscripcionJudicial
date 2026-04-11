@@ -85,11 +85,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     },
 
     fetchUser: async () => {
+        set({ isLoading: true })
         try {
             const { data } = await api.get<User>('/api/auth/me')
-            set({ user: data })
+            set({ user: data, isLoading: false })
         } catch {
-            set({ user: null, token: null })
+            set({ user: null, token: null, isLoading: false })
             localStorage.removeItem('access_token')
         }
     },

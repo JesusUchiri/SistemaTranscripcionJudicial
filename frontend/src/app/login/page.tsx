@@ -149,14 +149,18 @@ function LoginForm() {
                     </div>
 
                     <div className="flex justify-center">
-                        <GoogleLogin
-                            onSuccess={handleGoogleSuccess}
-                            onError={() => {}}
-                            useOneTap
-                            theme="outline"
-                            shape="pill"
-                            width="100%"
-                        />
+                        {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
+                            <GoogleLogin
+                                onSuccess={handleGoogleSuccess}
+                                onError={() => {}}
+                                useOneTap
+                                theme="outline"
+                                shape="pill"
+                                width="350"
+                            />
+                        ) : (
+                            <p className="text-[10px] text-[#1B3A5C]/20 uppercase font-bold">Google Auth no configurado</p>
+                        )}
                     </div>
 
                     {/* Quick Access */}
