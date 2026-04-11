@@ -19,9 +19,18 @@ import {
     Loader2
 } from 'lucide-react'
 
+export interface ProcesarResult {
+    regions: Array<{ start: number; end: number }>
+    filters: {
+        normalize: boolean
+        removeSilence: boolean
+        volume: number
+    }
+}
+
 interface AudioEditorPreProps {
     file: File
-    onProcess: (processedBlob: Blob) => void
+    onProcess: (result: ProcesarResult) => void
     onCancel: () => void
 }
 
@@ -97,11 +106,22 @@ export default function AudioEditorPre({ file, onProcess, onCancel }: AudioEdito
 
     const handleProcess = async () => {
         setIsProcessing(true)
-        // Simulamos procesamiento por ahora
+        
+        // Obtener regiones actuales del plugin
+        const regions = regionsRef.current?.getRegions() || []
+        const regionsData = regions.map((r: any) => ({ start: r.start, end: r.end }))
+
         setTimeout(() => {
-            onProcess(file)
+            onProcess({
+                regions: regionsData,
+                filters: {
+                    normalize: filters.normalize,
+                    removeSilence: filters.removeSilence,
+                    volume: filters.volume
+                }
+            })
             setIsProcessing(false)
-        }, 1500)
+        }, 1000)
     }
 
     return (
