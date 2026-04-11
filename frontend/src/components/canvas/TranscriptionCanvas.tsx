@@ -355,8 +355,29 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
             editor?.commands.removeProvisional()
             return
         }
-        editor.commands.setProvisional(provisionalText)
-    }, [editor, provisionalText])
+        const { etiqueta, color } = getSpeakerInfo(provisionalSpeaker || 'SPEAKER_00')
+        // El nodo espera words[] y prevCount para el diffing
+        const words = (provisionalText || '').trim().split(/\s+/)
+        
+        // Intentar update primero, si falla (no existe el nodo), hacer set
+        const updated = editor.commands.updateProvisional({
+            words,
+            prevCount: 0, // En este refactor simplificado pasamos 0, el nodo lo manejará
+            speakerId: provisionalSpeaker || 'SPEAKER_00',
+            color,
+            speakerLabel: provisionalSpeaker !== lastConfirmedSpeakerRef.current ? etiqueta : ''
+        })
+
+        if (!updated) {
+            editor.commands.setProvisional({
+                words,
+                prevCount: 0,
+                speakerId: provisionalSpeaker || 'SPEAKER_00',
+                color,
+                speakerLabel: provisionalSpeaker !== lastConfirmedSpeakerRef.current ? etiqueta : ''
+            })
+        }
+    }, [editor, provisionalText, provisionalSpeaker, getSpeakerInfo])
 
     useEffect(() => {
         if (!editor) return
