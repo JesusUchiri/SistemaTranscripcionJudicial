@@ -67,14 +67,14 @@ export default function RevisionBatchPanel({ segmentos, onAceptar, onAplicarBatc
                                 <div className="flex gap-2">
                                     <button
                                         onClick={() => onAceptar(prop.id, 'rechazar')}
-                                        className="w-7 h-7 flex items-center justify-center text-red-400 hover:bg-red-50 hover:text-red-600 rounded-lg transition-all"
+                                        className="w-7 h-7 flex items-center justify-center text-red-400 hover:bg-red-50/50 hover:text-[#9B2226] rounded-lg transition-all"
                                         title="Mantener original"
                                     >
                                         <X className="w-4 h-4" />
                                     </button>
                                     <button
                                         onClick={() => onAceptar(prop.id, 'aceptar')}
-                                        className="w-7 h-7 flex items-center justify-center text-green-500 hover:bg-green-50 hover:text-green-700 rounded-lg transition-all"
+                                        className="w-7 h-7 flex items-center justify-center text-green-500 hover:bg-green-50/50 hover:text-[#1B4332] rounded-lg transition-all"
                                         title="Aplicar mejora"
                                     >
                                         <Check className="w-4 h-4" />
@@ -90,8 +90,8 @@ export default function RevisionBatchPanel({ segmentos, onAceptar, onAplicarBatc
                                     </p>
                                 </div>
                                 <div className="p-2.5 bg-green-50/30 rounded-xl border border-green-100/50">
-                                    <span className="block text-[8px] font-bold text-green-600 uppercase tracking-widest mb-1">Mejora Batch</span>
-                                    <p className="text-[11px] leading-relaxed text-[#1B3A5C] font-medium">
+                                    <span className="block text-[8px] font-bold text-[#1B4332]/60 uppercase tracking-widest mb-1">Mejora Batch</span>
+                                    <p className="text-[11px] leading-relaxed text-[#1B4332] font-medium">
                                         {prop.texto_batch}
                                     </p>
                                 </div>

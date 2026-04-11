@@ -196,15 +196,15 @@ export default function PaginaActa() {
                                     </div>
                                 )}
                                 {canApprove && currentActa.estado === 'en_revision' && (
-                                    <button onClick={aprobarActa} className="btn-primary !bg-green-700 !py-2.5 !rounded-xl !text-xs">
+                                    <button onClick={aprobarActa} className="btn-primary !bg-[#1B4332] !py-2.5 !rounded-xl !text-xs shadow-lg shadow-green-900/20">
                                         Aprobar Oficialmente
                                     </button>
                                 )}
                                 <div className="flex gap-1">
-                                    <button onClick={() => descargarActa('docx')} className="w-10 h-10 flex items-center justify-center rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all">
+                                    <button onClick={() => descargarActa('docx')} className="w-10 h-10 flex items-center justify-center rounded-xl bg-[#1B3A5C]/5 text-[#1B3A5C] hover:bg-[#1B3A5C]/10 transition-all" title="Descargar Word">
                                         <Download className="w-4 h-4" />
                                     </button>
-                                    <button onClick={() => descargarActa('pdf')} className="w-10 h-10 flex items-center justify-center rounded-xl bg-red-50 text-red-600 hover:bg-red-100 transition-all">
+                                    <button onClick={() => descargarActa('pdf')} className="w-10 h-10 flex items-center justify-center rounded-xl bg-red-50 text-red-600 hover:bg-red-100 transition-all" title="Descargar PDF">
                                         <FileText className="w-4 h-4" />
                                     </button>
                                 </div>
