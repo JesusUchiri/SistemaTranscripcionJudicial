@@ -24,7 +24,7 @@ export default function DashboardLayout({
 
     return (
         <AuthGuard>
-            <div className="h-screen flex flex-col" style={{ background: 'var(--bg-primary)' }}>
+            <div className="fixed inset-0 flex flex-col overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
                 {/* Header Global del Dashboard */}
                 <header
                     className="shrink-0 px-6 sm:px-8 py-3 flex items-center justify-between gap-4"

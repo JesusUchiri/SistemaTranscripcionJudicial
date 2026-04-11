@@ -43,12 +43,13 @@
 
 html, body {
   height: 100%;
-  overflow: hidden;
   font-family: var(--font-sans);
   color: var(--text-primary);
   background: var(--bg-primary);
   -webkit-font-smoothing: antialiased;
 }
+
+/* El scroll se manejará a nivel de layout o contenedor específico */
 
 /* ── Components Refinement ─────────────────────────── */
 

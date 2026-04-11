@@ -2,16 +2,6 @@
 
 /**
  * Página de transcripción de audiencia — Vista principal del Canvas.
- *
- * Sprint 2 — Layout 72/28:
- * - Izquierda: Canvas TipTap editable + controles + barra de estado
- * - Derecha: Info + Reproductor audio + Panel hablantes/marcadores/frases
- *
- * Wiring:
- * - Audio player → Canvas: highlight del segmento activo
- * - Canvas → Audio player: click en segmento salta al timestamp
- * - PanelHablantes → Canvas: al cambiar rol, etiqueta/color se propagan
- * - AtajosFrases → Canvas: inserción con Ctrl+[0-9]
  */
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
@@ -31,6 +21,20 @@ import PanelVariables, { type VariableDeteccion } from '@/components/variables/P
 import api from '@/lib/api'
 import { apiBaseUrl } from '@/lib/urls'
 import type { Audiencia, Segmento } from '@/types'
+import { motion, AnimatePresence } from 'framer-motion'
+import { 
+    ChevronLeft, 
+    FileText, 
+    Mic2, 
+    Monitor, 
+    Play, 
+    Pause, 
+    Square, 
+    RotateCcw, 
+    RotateCw,
+    Info,
+    Activity
+} from 'lucide-react'
 
 /* ── Types ──────────────────────────────────────────── */
 
@@ -84,7 +88,6 @@ export default function PaginaTranscripcion() {
 
     const { isConnected, connect, sendAudio, stop, disconnect } = useDeepgramSocket(audienciaId)
 
-    /* ── Variables handlers ──────────────────────────── */
     const handleAceptarDeteccion = useCallback(async (det: VariableDeteccion) => {
         if (!audiencia) return
         const { VARIABLES_DEF } = await import('@/lib/variables')
@@ -100,7 +103,7 @@ export default function PaginaTranscripcion() {
         }
         removeVarDeteccion(det.key)
     }, [audiencia, audienciaId, removeVarDeteccion])
-    // Audio de sistema/video suele llegar a <5% de amplitud — requiere boost de ganancia
+
     const { isCapturing, isPaused, audioLevel, startCapture, pauseCapture, resumeCapture, stopCapture, error: errorAudio } = useAudioCapture({
         onAudioChunk: sendAudio,
         gainValue: fuenteAudio === 'system' ? 18 : 4,
@@ -111,8 +114,6 @@ export default function PaginaTranscripcion() {
     const temporizadorRef = useRef<NodeJS.Timeout | null>(null)
     const prevTranscribingRef = useRef(false)
 
-    /* ── Load audiencia ─────────────────────────────── */
-
     useEffect(() => {
         const cargar = async () => {
             try {
@@ -122,10 +123,6 @@ export default function PaginaTranscripcion() {
                 ])
                 setAudiencia(resAudiencia.data)
                 useCanvasStore.getState().setSegments(resSegmentos.data)
-                
-                // Ocultar selector solo en estados finales donde no tiene sentido grabar más.
-                // Si hay segmentos previos pero el estado sigue siendo activo,
-                // mantener el selector visible para poder reanudar la grabación tras un refresco.
                 if (resAudiencia.data.estado === 'transcrita' || resAudiencia.data.estado === 'finalizada') {
                     setMostrarSelector(false)
                 }
@@ -136,7 +133,7 @@ export default function PaginaTranscripcion() {
                 } else if (status === 404) {
                     router.replace('/')
                 } else {
-                    setCargaError('No se pudo conectar con el servidor. Verifica que el backend esté corriendo.')
+                    setCargaError('No se pudo conectar con el servidor.')
                 }
             }
         }
@@ -147,14 +144,11 @@ export default function PaginaTranscripcion() {
         }
     }, [audienciaId, router, reset])
 
-    /* ── Sprint 8: Revisión de Propuestas y Merge ──── */
-
     const handleAceptarBatch = useCallback(async (id: string, accion: 'aceptar' | 'rechazar') => {
         try {
             await api.post(`/api/audiencias/${audienciaId}/segmentos/batch-update`, {
                 decisiones: [{ segment_id: id, accion }]
             })
-            // Actualizar el estado local (CanvasStore) para reflejar que la propuesta desapareció (o se aceptó)
             const store = useCanvasStore.getState()
             const updated = store.segments.map(seg => {
                 if (seg.id === id) {
@@ -174,20 +168,13 @@ export default function PaginaTranscripcion() {
 
     const handleAplicarMultiplesBatch = useCallback(async (decisiones: Array<{ segment_id: string, accion: string }>) => {
         try {
-            await api.post(`/api/audiencias/${audienciaId}/segmentos/batch-update`, {
-                decisiones
-            })
-            
-            // Refrescar los segmentos trayéndolos de BD para estar 100% sincronizados
+            await api.post(`/api/audiencias/${audienciaId}/segmentos/batch-update`, { decisiones })
             const resSegmentos = await api.get<Segmento[]>(`/api/audiencias/${audienciaId}/segmentos`)
             useCanvasStore.getState().setSegments(resSegmentos.data)
-            
         } catch (error) {
             console.error('Error aplicando decisiones batch múltiples:', error)
         }
     }, [audienciaId])
-
-    /* ── Timer ──────────────────────────────────────── */
 
     useEffect(() => {
         if (isTranscribing) {
@@ -202,47 +189,29 @@ export default function PaginaTranscripcion() {
         }
     }, [isTranscribing, setElapsedSeconds])
 
-    /* ── Refresh audiencia after transcription stops (to get audio_path) ── */
-    // Polls until estado="transcrita" so we know the backend finalized the WAV file.
-
     useEffect(() => {
         const wasTranscribing = prevTranscribingRef.current
         prevTranscribingRef.current = isTranscribing
-
         if (!wasTranscribing || isTranscribing || isPaused) return
-
         let attempts = 0
         let timerId: ReturnType<typeof setTimeout> | null = null
-
         const poll = async () => {
             attempts++
             try {
                 const { data } = await api.get<Audiencia>(`/api/audiencias/${audienciaId}`)
                 setAudiencia(data)
                 if (data.estado === 'transcrita' || data.estado === 'finalizada') return
-            } catch (err) {
-                console.error('Error refreshing audiencia after stop:', err)
-            }
-            if (attempts < 10) {
-                timerId = setTimeout(poll, 2000)
-            }
+            } catch (err) {}
+            if (attempts < 10) timerId = setTimeout(poll, 2000)
         }
-
-        // Primer intento a los 2s
         timerId = setTimeout(poll, 2000)
         return () => { if (timerId) clearTimeout(timerId) }
     }, [isTranscribing, isPaused, audienciaId])
 
-    /* ── Speaker IDs detected ──────────────────────── */
-
     const speakersDetectados = useMemo(
         () => Array.from(new Set(segments.map(s => s.speaker_id))),
-        // Solo recalcular cuando realmente cambia la lista de speaker_ids únicos
-        // eslint-disable-next-line react-hooks/exhaustive-deps
         [segments.map(s => s.speaker_id).join(',')]
     )
-
-    /* ── Start/Stop transcription ──────────────────── */
 
     const iniciarTranscripcion = useCallback(async () => {
         setMostrarSelector(false)
@@ -271,129 +240,78 @@ export default function PaginaTranscripcion() {
         setTranscribing(false)
     }, [stopCapture, stop, setTranscribing])
 
-    /* ── Canvas ↔ Audio sync ───────────────────────── */
-
-    // Canvas segment click → seek audio player
     const handleSeekAudio = useCallback((timestamp: number) => {
         reproductorRef.current?.seekTo(timestamp)
         reproductorRef.current?.play()
     }, [])
 
-    // Audio player time update → highlight active segment in canvas
     const handleAudioTimeUpdate = useCallback((segundos: number) => {
         setCurrentAudioTime(segundos)
     }, [setCurrentAudioTime])
 
-    // Debounced segment edit → save to API
     const handleSegmentoEditado = useCallback(async (id: string, texto: string) => {
         try {
-            await api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, {
-                texto_editado: texto,
-            })
+            await api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { texto_editado: texto })
         } catch (error) {
             console.error('Error guardando segmento:', error)
         }
     }, [audienciaId])
 
-    // PanelHablantes update → refresh labels in Canvas via re-render
     const handleHablanteActualizado = useCallback((hablante: HablanteInfo) => {
         setHablantesData(prev => {
             const exists = prev.some(h => h.id === hablante.id)
-            if (exists) {
-                return prev.map(h => (h.id === hablante.id ? hablante : h))
-            }
-            // Hablante nuevo — agregarlo a la lista
+            if (exists) return prev.map(h => (h.id === hablante.id ? hablante : h))
             return [...prev, hablante]
         })
     }, [])
 
-    // Speaker change in canvas → update segments + merge if adjacent same speaker
     const handleSpeakerCambiado = useCallback(async (firstSegmentId: string, newSpeakerId: string) => {
         const store = useCanvasStore.getState()
         const segs = store.segments
-
         const startIdx = segs.findIndex(s => s.id === firstSegmentId)
         if (startIdx === -1) return
-
         const currentSpeakerId = segs[startIdx].speaker_id
         if (currentSpeakerId === newSpeakerId) return
-
-        // Collect the speaker group starting at firstSegmentId
         const groupIds: string[] = []
         for (let i = startIdx; i < segs.length; i++) {
             if (segs[i].speaker_id !== currentSpeakerId) break
             groupIds.push(segs[i].id)
         }
-
-        // Optimistic update in store
         store.updateSegmentsSpeaker(groupIds, newSpeakerId)
-
-        // Update backend
         try {
-            await Promise.all(
-                groupIds.map(id =>
-                    api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { speaker_id: newSpeakerId })
-                )
-            )
-        } catch (err) {
-            console.error('Error actualizando speaker_id:', err)
-            return
-        }
-
-        // Check if adjacent groups have the same speaker → merge
+            await Promise.all(groupIds.map(id => api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { speaker_id: newSpeakerId })))
+        } catch (err) { return }
         const updatedSegs = useCanvasStore.getState().segments
         const newStartIdx = updatedSegs.findIndex(s => s.id === firstSegmentId)
         if (newStartIdx === -1) return
-
-        // Collect current group again
         const currentGroupIds: string[] = []
         for (let i = newStartIdx; i < updatedSegs.length; i++) {
             if (updatedSegs[i].speaker_id !== newSpeakerId) break
             currentGroupIds.push(updatedSegs[i].id)
         }
-
-        // Check prev segment for same speaker
         const prevIds: string[] = []
         if (newStartIdx > 0 && updatedSegs[newStartIdx - 1].speaker_id === newSpeakerId) {
-            const prevSpeaker = newSpeakerId
-            for (let i = newStartIdx - 1; i >= 0; i--) {
-                if (updatedSegs[i].speaker_id !== prevSpeaker) break
+            for (let i = newStartIdx - 1; i >= 0 && updatedSegs[i].speaker_id === newSpeakerId; i--)
                 prevIds.unshift(updatedSegs[i].id)
-            }
         }
-
-        // Check next segment for same speaker
         const afterIdx = newStartIdx + currentGroupIds.length
         const nextIds: string[] = []
         if (afterIdx < updatedSegs.length && updatedSegs[afterIdx].speaker_id === newSpeakerId) {
-            for (let i = afterIdx; i < updatedSegs.length; i++) {
-                if (updatedSegs[i].speaker_id !== newSpeakerId) break
+            for (let i = afterIdx; i < updatedSegs.length && updatedSegs[i].speaker_id === newSpeakerId; i++)
                 nextIds.push(updatedSegs[i].id)
-            }
         }
-
         const toMerge = [...prevIds, ...currentGroupIds, ...nextIds]
         if (toMerge.length > 1) {
             try {
-                const { data: merged } = await api.post<Segmento>(
-                    `/api/audiencias/${audienciaId}/segmentos/merge`,
-                    { segment_ids: toMerge }
-                )
+                const { data: merged } = await api.post<Segmento>(`/api/audiencias/${audienciaId}/segmentos/merge`, { segment_ids: toMerge })
                 store.replaceSegments(toMerge, merged)
-            } catch (err) {
-                console.error('Error fusionando segmentos:', err)
-            }
+            } catch (err) {}
         }
     }, [audienciaId])
 
-    // Reasignar segmentos seleccionados a un nuevo speaker (desde selection toolbar)
     const handleReasignarSegmentos = useCallback(async (segmentIds: string[], newSpeakerId: string) => {
         const store = useCanvasStore.getState()
-
-        // Optimistic update: mark ALL selected segments as newSpeakerId
         store.updateSegmentsSpeaker(segmentIds, newSpeakerId)
-
-        // Persist to backend (skip segments already that speaker)
         const segsBeforeUpdate = store.segments
         const changed = segmentIds.filter(id => {
             const seg = segsBeforeUpdate.find(s => s.id === id)
@@ -401,475 +319,258 @@ export default function PaginaTranscripcion() {
         })
         if (changed.length > 0) {
             try {
-                await Promise.all(
-                    changed.map(id =>
-                        api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { speaker_id: newSpeakerId })
-                    )
-                )
-            } catch (err) {
-                console.error('Error reasignando segmentos:', err)
-                return
-            }
+                await Promise.all(changed.map(id => api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { speaker_id: newSpeakerId })))
+            } catch (err) { return }
         }
-
-        // Build one contiguous merge block:
-        //   start = earliest selected segment index
-        //   expand left while same speaker
-        //   expand right while same speaker
-        //   this handles: pure merge (same speaker, just fuse) + reassign+merge
         const segs = useCanvasStore.getState().segments
         const selSet = new Set(segmentIds)
-
-        // Find the contiguous range that now shares newSpeakerId around the selected block
         const idxFirst = segs.findIndex(s => selSet.has(s.id))
-        const idxLast  = segs.reduce((acc, s, i) => selSet.has(s.id) ? i : acc, -1)
+        const idxLast = segs.reduce((acc, s, i) => selSet.has(s.id) ? i : acc, -1)
         if (idxFirst === -1) return
-
         const mergeBlock: string[] = []
-        // Expand left from first selected
-        for (let i = idxFirst - 1; i >= 0 && segs[i].speaker_id === newSpeakerId; i--)
-            mergeBlock.unshift(segs[i].id)
-        // Add the core range (all segments between first and last selected, inclusive)
-        for (let i = idxFirst; i <= idxLast; i++)
-            mergeBlock.push(segs[i].id)
-        // Expand right from last selected
-        for (let i = idxLast + 1; i < segs.length && segs[i].speaker_id === newSpeakerId; i++)
-            mergeBlock.push(segs[i].id)
-
+        for (let i = idxFirst - 1; i >= 0 && segs[i].speaker_id === newSpeakerId; i--) mergeBlock.unshift(segs[i].id)
+        for (let i = idxFirst; i <= idxLast; i++) mergeBlock.push(segs[i].id)
+        for (let i = idxLast + 1; i < segs.length && segs[i].speaker_id === newSpeakerId; i++) mergeBlock.push(segs[i].id)
         if (mergeBlock.length > 1) {
             try {
-                const { data: merged } = await api.post<Segmento>(
-                    `/api/audiencias/${audienciaId}/segmentos/merge`,
-                    { segment_ids: mergeBlock }
-                )
+                const { data: merged } = await api.post<Segmento>(`/api/audiencias/${audienciaId}/segmentos/merge`, { segment_ids: mergeBlock })
                 store.replaceSegments(mergeBlock, merged)
-            } catch (err) {
-                console.error('Error fusionando segmentos:', err)
-            }
+            } catch (err) {}
         }
     }, [audienciaId])
 
-    // Undo/Redo via canvas ref
     const handleUndo = useCallback(() => canvasRef.current?.undo(), [])
     const handleRedo = useCallback(() => canvasRef.current?.redo(), [])
-
-    // Insert frase from sidebar
-    const insertarFraseEnCanvas = useCallback((texto: string) => {
-        canvasRef.current?.insertContent(texto)
-    }, [])
-
-    // Bookmark click → seek audio + scroll canvas
+    const insertarFraseEnCanvas = useCallback((texto: string) => canvasRef.current?.insertContent(texto), [])
     const handleClickMarcador = useCallback((timestamp: number) => {
         reproductorRef.current?.seekTo(timestamp)
         reproductorRef.current?.play()
     }, [])
 
-    /* ── Loading ────────────────────────────────────── */
-
     if (!audiencia) {
         return (
-            <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
+            <div className="fixed inset-0 flex items-center justify-center bg-[#FDFCFB]">
                 {cargaError ? (
-                    <div className="text-center max-w-sm px-6">
-                        <p className="text-sm font-medium mb-2" style={{ color: 'var(--danger)' }}>Error de conexión</p>
-                        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>{cargaError}</p>
+                    <div className="text-center max-w-sm px-8">
+                        <div className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                            <Info className="w-6 h-6" />
+                        </div>
+                        <p className="text-sm font-bold text-[#1B3A5C] mb-2">Error de Conexión</p>
+                        <p className="text-xs text-[#1B3A5C]/60 mb-8">{cargaError}</p>
                         <button
-                            onClick={() => router.replace('/')}
-                            className="text-xs px-4 py-2 rounded-lg"
-                            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                            onClick={() => router.replace('/dashboard')}
+                            className="btn-secondary w-full"
                         >
-                            ← Volver al inicio
+                            ← Volver al Dashboard
                         </button>
                     </div>
                 ) : (
-                    <div
-                        className="w-10 h-10 border-3 rounded-full animate-spin"
-                        style={{ borderColor: 'var(--accent-gold)', borderTopColor: 'transparent' }}
-                    />
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="w-10 h-10 border-2 rounded-full animate-spin border-[#A68246] border-t-transparent" />
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C]/40">Cargando Audiencia...</p>
+                    </div>
                 )}
             </div>
         )
     }
 
-    const audioUrl = audiencia.audio_path
-        ? `${apiBaseUrl()}/api/audiencias/${audienciaId}/audio`
-        : null
-
-    /* ── Render ──────────────────────────────────────── */
+    const audioUrl = audiencia.audio_path ? `${apiBaseUrl()}/api/audiencias/${audienciaId}/audio` : null
 
     return (
       <AuthGuard>
-        <div className="h-screen flex flex-col" style={{ background: 'var(--bg-primary)' }}>
-            {/* ── Header ─────────────────────────────────── */}
-            <header
-                className="flex items-center justify-between px-4 sm:px-6 py-2 sm:py-3 shrink-0"
-                style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}
-            >
-                <div className="flex items-center gap-3 sm:gap-4 overflow-hidden">
+        <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#FDFCFB]">
+            {/* ── Header Profesional ─────────────────────── */}
+            <header className="flex items-center justify-between px-8 py-4 shrink-0 bg-white border-b border-[#1B3A5C]/5 z-30">
+                <div className="flex items-center gap-6 overflow-hidden">
                     <button
-                        onClick={() => window.location.href = '/'}
-                        className="text-[10px] sm:text-xs px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg transition-colors hover:brightness-110 shrink-0"
-                        style={{ color: 'var(--text-muted)', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
+                        onClick={() => router.push('/dashboard')}
+                        className="w-10 h-10 flex items-center justify-center rounded-xl bg-[#1B3A5C]/5 text-[#1B3A5C] hover:bg-[#1B3A5C]/10 transition-all shrink-0"
                     >
-                        ← <span className="hidden sm:inline">Volver</span>
+                        <ChevronLeft className="w-5 h-5" />
                     </button>
                     <div className="overflow-hidden">
-                        <h1 className="text-xs sm:text-sm font-bold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {audiencia.expediente}
-                        </h1>
-                        <p className="text-[10px] sm:text-xs truncate flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-                            <span>{audiencia.tipo_audiencia}</span>
-                            <span className="hidden sm:inline">— {audiencia.juzgado}</span>
-                            {((audiencia.costo_deepgram_usd || 0) + (audiencia.costo_claude_usd || 0)) > 0 && (
-                                <>
-                                    <span>·</span>
-                                    <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-black/10">
-                                        Costo API: ${(
-                                            (audiencia.costo_deepgram_usd || 0) + (audiencia.costo_claude_usd || 0)
-                                        ).toFixed(4)}
-                                    </span>
-                                </>
-                            )}
+                        <div className="flex items-center gap-3">
+                            <h1 className="text-sm font-bold text-[#1B3A5C] truncate">{audiencia.expediente}</h1>
+                            <span className="px-2 py-0.5 rounded-full bg-[#A68246]/10 text-[#A68246] text-[9px] font-bold uppercase tracking-wider">
+                                {audiencia.estado.replace('_', ' ')}
+                            </span>
+                        </div>
+                        <p className="text-[10px] text-[#1B3A5C]/40 uppercase font-bold tracking-widest mt-0.5 truncate">
+                            {audiencia.tipo_audiencia} · {audiencia.juzgado}
                         </p>
                     </div>
                 </div>
 
-                {/* Right controls */}
-                <div className="flex items-center gap-2">
-                    {/* Connection status — solo visible cuando activo o con error */}
+                <div className="flex items-center gap-4">
                     {connectionStatus !== 'disconnected' && (
-                        <div
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] shrink-0"
-                            style={{
-                                background: connectionStatus === 'connected' ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)',
-                                color: connectionStatus === 'connected' ? '#4ADE80' : '#FB923C',
-                            }}
-                        >
-                            <span
-                                className="w-1.5 h-1.5 rounded-full"
-                                style={{ background: connectionStatus === 'connected' ? '#4ADE80' : '#FB923C' }}
-                            />
-                            <span className="hidden sm:inline">
-                                {connectionStatus === 'connected' ? 'Conectado' : 'Reconectando...'}
+                        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#1B3A5C]/[0.03] border border-[#1B3A5C]/5">
+                            <div className={`w-1.5 h-1.5 rounded-full ${connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-orange-500'}`} />
+                            <span className="text-[9px] font-bold text-[#1B3A5C]/60 uppercase tracking-widest">
+                                {connectionStatus === 'connected' ? 'En Línea' : 'Sincronizando...'}
                             </span>
                         </div>
                     )}
                     
                     <button
-                        onClick={() => window.location.href = `/audiencia/${audienciaId}/acta`}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-110 shrink-0"
-                        style={{
-                            background: 'var(--accent-gold)',
-                            color: 'white',
-                            border: '1px solid transparent',
-                        }}
+                        onClick={() => router.push(`/audiencia/${audienciaId}/acta`)}
+                        className="btn-primary flex items-center gap-2 !py-2.5 !rounded-xl !text-xs shadow-none"
                     >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                            <polyline points="14 2 14 8 20 8"/>
-                            <line x1="16" y1="13" x2="8" y2="13"/>
-                            <line x1="16" y1="17" x2="8" y2="17"/>
-                            <polyline points="10 9 9 9 8 9"/>
-                        </svg>
-                        <span className="hidden sm:inline">Redactar Acta</span>
+                        <FileText className="w-4 h-4" />
+                        Redactar Acta
                     </button>
                 </div>
             </header>
 
-            <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
-                {/* ── Canvas (Main Area) ────────────────────────── */}
-                <div className="flex-1 flex flex-col min-w-0 min-h-0">
-                    {/* Control strip — altura fija para evitar saltos de layout */}
-                    {(mostrarSelector || isInitializing || isTranscribing || isPaused) && (
-                        <div
-                            className="px-4 sm:px-6 shrink-0 flex items-center gap-3"
-                            style={{
-                                height: '52px',
-                                borderBottom: '1px solid var(--border-subtle)',
-                                background: 'var(--bg-secondary)',
-                            }}
-                        >
-                            {/* Estado: selector de fuente o conectando */}
-                            {(mostrarSelector || isInitializing) && !isTranscribing && !isPaused && (
-                                <>
-                                    <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                        Fuente:
-                                    </span>
-                                    <div className="flex gap-1.5">
-                                        {([
-                                            { value: 'microphone' as const, icon: (
-                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                                                    <line x1="12" y1="19" x2="12" y2="23"/>
-                                                    <line x1="8" y1="23" x2="16" y2="23"/>
-                                                </svg>
-                                            ), label: 'Micrófono' },
-                                            { value: 'system' as const, icon: (
-                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                    <rect x="2" y="3" width="20" height="14" rx="2"/>
-                                                    <line x1="8" y1="21" x2="16" y2="21"/>
-                                                    <line x1="12" y1="17" x2="12" y2="21"/>
-                                                </svg>
-                                            ), label: 'Sistema' },
-                                        ]).map(src => (
-                                            <button
-                                                key={src.value}
-                                                onClick={() => !isInitializing && setFuenteAudio(src.value)}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
-                                                style={{
-                                                    background: fuenteAudio === src.value ? 'var(--accent-gold-soft)' : 'var(--bg-surface)',
-                                                    border: `1px solid ${fuenteAudio === src.value ? 'rgba(166,130,70,0.35)' : 'var(--border-default)'}`,
-                                                    color: fuenteAudio === src.value ? 'var(--accent-gold)' : 'var(--text-secondary)',
-                                                    opacity: isInitializing ? 0.5 : 1,
-                                                }}
-                                            >
-                                                {src.icon}
-                                                <span className="hidden sm:inline">{src.label}</span>
-                                            </button>
-                                        ))}
+            <div className="flex flex-col lg:flex-row flex-1 min-h-0">
+                {/* ── Área de Trabajo (Canvas) ────────────────── */}
+                <div className="flex-1 flex flex-col min-w-0 bg-[#FDFCFB]">
+                    {/* Barra de Herramientas Dinámica */}
+                    <AnimatePresence mode="wait">
+                        {(mostrarSelector || isInitializing || isTranscribing || isPaused) ? (
+                            <motion.div
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -10 }}
+                                className="px-8 h-16 flex items-center justify-between bg-white border-b border-[#1B3A5C]/5 shrink-0"
+                            >
+                                {/* Selector de Fuente */}
+                                {mostrarSelector && !isTranscribing && !isPaused && (
+                                    <div className="flex items-center gap-4">
+                                        <div className="flex bg-[#1B3A5C]/5 p-1 rounded-xl">
+                                            {[
+                                                { id: 'microphone', icon: <Mic2 className="w-3.5 h-3.5" />, label: 'Micrófono' },
+                                                { id: 'system', icon: <Monitor className="w-3.5 h-3.5" />, label: 'Sistema' }
+                                            ].map(src => (
+                                                <button
+                                                    key={src.id}
+                                                    onClick={() => setFuenteAudio(src.id as any)}
+                                                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+                                                        fuenteAudio === src.id ? 'bg-white text-[#1B3A5C] shadow-sm' : 'text-[#1B3A5C]/40 hover:text-[#1B3A5C]'
+                                                    }`}
+                                                >
+                                                    {src.icon}
+                                                    {src.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <button
+                                            onClick={iniciarTranscripcion}
+                                            disabled={isInitializing}
+                                            className="px-6 py-2.5 bg-[#A68246] text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition-all disabled:opacity-50"
+                                        >
+                                            {isInitializing ? 'Conectando...' : 'Comenzar Captura'}
+                                        </button>
                                     </div>
-                                    <button
-                                        onClick={iniciarTranscripcion}
-                                        disabled={isInitializing}
-                                        className="ml-auto px-5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-110 disabled:opacity-70"
-                                        style={{
-                                            background: 'var(--accent-gold)',
-                                            color: 'white',
-                                        }}
-                                    >
-                                        {isInitializing ? 'Conectando...' : 'Iniciar'}
-                                    </button>
-                                </>
-                            )}
+                                )}
 
-                            {/* Estado: grabando o pausado */}
-                            {(isTranscribing || isPaused) && (
-                                <>
-                                    <div className="flex items-center gap-2">
-                                        {isPaused ? (
-                                            <>
-                                                <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: '#F59E0B' }} />
-                                                <span className="text-xs font-medium" style={{ color: '#F59E0B' }}>Pausado</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <span className="w-2 h-2 rounded-full animate-pulse shrink-0" style={{ background: 'var(--danger)' }} />
-                                                <span className="text-xs font-medium" style={{ color: 'var(--danger)' }}>Grabando</span>
-                                                {/* Medidor de nivel de audio — 5 barras */}
-                                                <div className="flex items-end gap-px ml-1" title={`Nivel de audio: ${(audioLevel * 100).toFixed(1)}%`}>
-                                                    {[0.04, 0.12, 0.22, 0.36, 0.55].map((threshold, i) => (
-                                                        <div
+                                {/* Estado de Grabación */}
+                                {(isTranscribing || isPaused) && (
+                                    <div className="flex items-center justify-between w-full">
+                                        <div className="flex items-center gap-4">
+                                            <div className="flex items-center gap-3 px-4 py-2 bg-red-50 rounded-xl border border-red-100">
+                                                <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-orange-400' : 'bg-red-500 animate-pulse'}`} />
+                                                <span className="text-[10px] font-bold text-red-600 uppercase tracking-widest">
+                                                    {isPaused ? 'En Pausa' : 'Capturando Audio'}
+                                                </span>
+                                            </div>
+                                            {!isPaused && (
+                                                <div className="flex items-end gap-0.5 h-4 px-2">
+                                                    {[...Array(8)].map((_, i) => (
+                                                        <motion.div
                                                             key={i}
-                                                            style={{
-                                                                width: 3,
-                                                                height: 5 + i * 2,
-                                                                borderRadius: 1,
-                                                                background: audioLevel > threshold
-                                                                    ? (audioLevel > 0.7 ? '#ef4444' : audioLevel > 0.35 ? '#22c55e' : '#3b82f6')
-                                                                    : 'rgba(255,255,255,0.15)',
-                                                                transition: 'background 0.1s',
-                                                            }}
+                                                            animate={{ height: isCapturing ? [4, 16 * Math.random() + 4, 4] : 4 }}
+                                                            transition={{ repeat: Infinity, duration: 0.5, delay: i * 0.05 }}
+                                                            className="w-1 bg-[#A68246]/40 rounded-full"
                                                         />
                                                     ))}
                                                 </div>
-                                                {audioLevel < 0.03 && isCapturing && (
-                                                    <span className="text-xs ml-1" style={{ color: '#F59E0B' }} title="Señal muy débil">⚠</span>
-                                                )}
-                                            </>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-2 ml-auto">
-                                        {isPaused ? (
+                                            )}
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-2">
                                             <button
-                                                onClick={reanudarTranscripcion}
-                                                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                                                style={{
-                                                    background: 'rgba(34,197,94,0.12)',
-                                                    color: '#22C55E',
-                                                    border: '1px solid rgba(34,197,94,0.25)',
-                                                }}
+                                                onClick={isPaused ? reanudarTranscripcion : pausarTranscripcion}
+                                                className="w-10 h-10 flex items-center justify-center rounded-xl bg-white border border-[#1B3A5C]/10 text-[#1B3A5C] hover:bg-[#1B3A5C]/5 transition-all"
                                             >
-                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                                                <span className="hidden sm:inline">Reanudar</span>
+                                                {isPaused ? <Play className="w-4 h-4 fill-current" /> : <Pause className="w-4 h-4 fill-current" />}
                                             </button>
-                                        ) : (
                                             <button
-                                                onClick={pausarTranscripcion}
-                                                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                                                style={{
-                                                    background: 'rgba(245,158,11,0.12)',
-                                                    color: '#F59E0B',
-                                                    border: '1px solid rgba(245,158,11,0.25)',
-                                                }}
+                                                onClick={detenerTranscripcion}
+                                                className="px-6 py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-red-700 transition-all flex items-center gap-2"
                                             >
-                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                                                <span className="hidden sm:inline">Pausar</span>
+                                                <Square className="w-3.5 h-3.5 fill-current" />
+                                                Finalizar
                                             </button>
-                                        )}
-                                        <button
-                                            onClick={detenerTranscripcion}
-                                            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                                            style={{
-                                                background: 'rgba(155,34,38,0.1)',
-                                                color: 'var(--danger)',
-                                                border: '1px solid rgba(155,34,38,0.2)',
-                                            }}
-                                        >
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-                                            <span className="hidden sm:inline">Detener</span>
-                                        </button>
+                                        </div>
                                     </div>
-                                </>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Editing toolbar — visible solo en modo edición (transcripción inactiva) */}
-                    {!isTranscribing && !isPaused && !mostrarSelector && segments.length > 0 && (
-                        <div
-                            className="px-4 sm:px-6 shrink-0 flex items-center gap-1"
-                            style={{
-                                height: '36px',
-                                borderBottom: '1px solid var(--border-subtle)',
-                                background: 'var(--bg-secondary)',
-                            }}
-                        >
-                            <button
-                                onClick={handleUndo}
-                                title="Deshacer (Ctrl+Z)"
-                                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-medium transition-all hover:brightness-110"
-                                style={{
-                                    background: 'var(--bg-surface)',
-                                    border: '1px solid var(--border-subtle)',
-                                    color: 'var(--text-secondary)',
-                                }}
+                                )}
+                            </motion.div>
+                        ) : !isTranscribing && !isPaused && !mostrarSelector && segments.length > 0 && (
+                            <motion.div
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="px-8 h-12 flex items-center gap-2 bg-white border-b border-[#1B3A5C]/5 shrink-0"
                             >
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
-                                </svg>
-                                <span className="hidden sm:inline">Deshacer</span>
-                            </button>
-                            <button
-                                onClick={handleRedo}
-                                title="Rehacer (Ctrl+Shift+Z)"
-                                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-medium transition-all hover:brightness-110"
-                                style={{
-                                    background: 'var(--bg-surface)',
-                                    border: '1px solid var(--border-subtle)',
-                                    color: 'var(--text-secondary)',
-                                }}
-                            >
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>
-                                </svg>
-                                <span className="hidden sm:inline">Rehacer</span>
-                            </button>
-                        </div>
-                    )}
+                                <button onClick={handleUndo} className="p-2 text-[#1B3A5C]/40 hover:text-[#1B3A5C] transition-colors" title="Deshacer"><RotateCcw className="w-4 h-4" /></button>
+                                <button onClick={handleRedo} className="p-2 text-[#1B3A5C]/40 hover:text-[#1B3A5C] transition-colors" title="Rehacer"><RotateCw className="w-4 h-4" /></button>
+                                <div className="w-px h-4 bg-[#1B3A5C]/10 mx-2" />
+                                <span className="text-[9px] font-bold text-[#1B3A5C]/30 uppercase tracking-widest">Modo Edición</span>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
 
-                    {/* Canvas TipTap */}
-                    <div className="flex-1 relative flex flex-col min-h-0">
+                    {/* El Canvas */}
+                    <div className="flex-1 relative flex flex-col min-h-0 bg-[#F7F5F2]/30">
                         <RevisionBatchPanel
                             segmentos={segments}
                             onAceptar={handleAceptarBatch}
                             onAplicarBatch={handleAplicarMultiplesBatch}
                         />
-                        <TranscriptionCanvas
-                            ref={canvasRef}
-                            soloLectura={isTranscribing}
-                            hablantes={hablantesData}
-                            onSegmentoEditado={handleSegmentoEditado}
-                            onSeekAudio={handleSeekAudio}
-                            onSpeakerCambiado={handleSpeakerCambiado}
-                            onReasignarSegmentos={handleReasignarSegmentos}
-                        />
-                    </div>
-
-                    {/* Status bar - Hidden or simplified on mobile */}
-                    <div className="hidden sm:block">
+                        <div className="flex-1 overflow-hidden relative">
+                            <TranscriptionCanvas
+                                ref={canvasRef}
+                                soloLectura={isTranscribing}
+                                hablantes={hablantesData}
+                                onSegmentoEditado={handleSegmentoEditado}
+                                onSeekAudio={handleSeekAudio}
+                                onSpeakerCambiado={handleSpeakerCambiado}
+                                onReasignarSegmentos={handleReasignarSegmentos}
+                            />
+                        </div>
                         <BarraEstado />
                     </div>
                 </div>
 
-                {/* ── Sidebar (Right on desktop, Bottom/Toggle on mobile) ──────────────────────────── */}
-                <aside
-                    className="lg:w-[320px] xl:w-[380px] shrink-0 flex flex-col overflow-hidden border-t lg:border-t-0 lg:border-l h-[300px] lg:h-full"
-                    style={{
-                        borderLeft: '1px solid var(--border-subtle)',
-                        background: 'var(--bg-secondary)',
-                    }}
-                >
-                    {/* Tabs */}
-                    <div className="flex shrink-0" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        {([
-                            { id: 'hablantes' as const, label: 'Hablantes' },
-                            { id: 'marcadores' as const, label: 'Marcadores' },
-                            { id: 'frases' as const, label: 'Frases' },
-                            { id: 'variables' as const, label: 'Variables', badge: varDetecciones.length > 0 ? varDetecciones.length : null },
-                        ]).map(tab => (
+                {/* ── Sidebar de Control ──────────────────────── */}
+                <aside className="lg:w-[360px] xl:w-[400px] shrink-0 flex flex-col bg-white border-l border-[#1B3A5C]/5 shadow-2xl z-20">
+                    <div className="flex border-b border-[#1B3A5C]/5">
+                        {[
+                            { id: 'hablantes', label: 'Hablantes' },
+                            { id: 'marcadores', label: 'Marcadores' },
+                            { id: 'frases', label: 'Frases' },
+                            { id: 'variables', label: 'Detección', badge: varDetecciones.length }
+                        ].map(tab => (
                             <button
                                 key={tab.id}
-                                onClick={() => setPestanaSidebar(tab.id)}
-                                className="flex-1 flex items-center justify-center gap-1 py-2.5 text-[9px] sm:text-[10px] font-medium uppercase tracking-wider transition-colors"
-                                style={{
-                                    color: pestanaSidebar === tab.id ? 'var(--accent-gold)' : 'var(--text-muted)',
-                                    borderBottom: pestanaSidebar === tab.id ? '2px solid var(--accent-gold)' : '2px solid transparent',
-                                }}
+                                onClick={() => setPestanaSidebar(tab.id as any)}
+                                className={`flex-1 py-4 text-[10px] font-bold uppercase tracking-widest transition-all relative ${
+                                    pestanaSidebar === tab.id ? 'text-[#A68246]' : 'text-[#1B3A5C]/30 hover:text-[#1B3A5C]'
+                                }`}
                             >
                                 {tab.label}
-                                {tab.badge && (
-                                    <span
-                                        className="w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center"
-                                        style={{ background: 'var(--accent-gold)', color: 'white' }}
-                                    >
-                                        {tab.badge}
-                                    </span>
+                                {tab.badge ? (
+                                    <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-[#A68246] text-white text-[8px]">{tab.badge}</span>
+                                ) : null}
+                                {pestanaSidebar === tab.id && (
+                                    <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#A68246]" />
                                 )}
                             </button>
                         ))}
                     </div>
 
-                    {/* Sidebar content */}
-                    <div className="flex-1 overflow-y-auto">
-                        {/* Audiencia info (always visible) */}
-                        <div className="p-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                            <h3
-                                className="text-xs font-semibold uppercase tracking-wider mb-2"
-                                style={{ color: 'var(--accent-gold)' }}
-                            >
-                                Información
-                            </h3>
-                            <div className="space-y-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                                <div className="flex justify-between">
-                                    <span style={{ color: 'var(--text-muted)' }}>Expediente</span>
-                                    <span className="font-medium">{audiencia.expediente}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span style={{ color: 'var(--text-muted)' }}>Tipo</span>
-                                    <span>{audiencia.tipo_audiencia}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span style={{ color: 'var(--text-muted)' }}>Fecha</span>
-                                    <span>{audiencia.fecha}</span>
-                                </div>
-                                {audiencia.delito && (
-                                    <div className="flex justify-between">
-                                        <span style={{ color: 'var(--text-muted)' }}>Delito</span>
-                                        <span>{audiencia.delito}</span>
-                                    </div>
-                                )}
-                                {audiencia.imputado_nombre && (
-                                    <div className="flex justify-between">
-                                        <span style={{ color: 'var(--text-muted)' }}>Imputado</span>
-                                        <span>{audiencia.imputado_nombre}</span>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Audio player (always visible) */}
-                        <div style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                        {/* Reproductor de Audio Integrado */}
+                        <div className="p-6 border-b border-[#1B3A5C]/5 bg-[#1B3A5C]/[0.02]">
                             <ReproductorAudio
                                 ref={reproductorRef}
                                 audioUrl={audioUrl}
@@ -878,38 +579,34 @@ export default function PaginaTranscripcion() {
                             />
                         </div>
 
-                        {/* Active panel */}
-                        {pestanaSidebar === 'hablantes' && (
-                            <PanelHablantes
-                                audienciaId={audienciaId}
-                                speakersDetectados={speakersDetectados}
-                                onHablanteActualizado={handleHablanteActualizado}
-                                onHablantesCargados={setHablantesData}
-                                hablandoAhora={provisionalSpeaker}
-                            />
-                        )}
-                        {pestanaSidebar === 'marcadores' && (
-                            <PanelMarcadores
-                                audienciaId={audienciaId}
-                                onSeekAudio={handleClickMarcador}
-                            />
-                        )}
-                        {pestanaSidebar === 'frases' && (
-                            <AtajosFrases
-                                onInsertarFrase={insertarFraseEnCanvas}
-                                habilitado={true}
-                            />
-                        )}
-                        {pestanaSidebar === 'variables' && audiencia && (
-                            <PanelVariables
-                                audiencia={audiencia}
-                                hablantes={hablantesData}
-                                detecciones={varDetecciones}
-                                onAceptarDeteccion={handleAceptarDeteccion}
-                                onRechazarDeteccion={removeVarDeteccion}
-                                onAudienciaActualizada={(campos) => setAudiencia(prev => prev ? { ...prev, ...campos } : prev)}
-                            />
-                        )}
+                        {/* Contenido Dinámico */}
+                        <div className="p-2">
+                            {pestanaSidebar === 'hablantes' && (
+                                <PanelHablantes
+                                    audienciaId={audienciaId}
+                                    speakersDetectados={speakersDetectados}
+                                    onHablanteActualizado={handleHablanteActualizado}
+                                    onHablantesCargados={setHablantesData}
+                                    hablandoAhora={provisionalSpeaker}
+                                />
+                            )}
+                            {pestanaSidebar === 'marcadores' && (
+                                <PanelMarcadores audienciaId={audienciaId} onSeekAudio={handleClickMarcador} />
+                            )}
+                            {pestanaSidebar === 'frases' && (
+                                <AtajosFrases onInsertarFrase={insertarFraseEnCanvas} habilitado={true} />
+                            )}
+                            {pestanaSidebar === 'variables' && audiencia && (
+                                <PanelVariables
+                                    audiencia={audiencia}
+                                    hablantes={hablantesData}
+                                    detecciones={varDetecciones}
+                                    onAceptarDeteccion={handleAceptarDeteccion}
+                                    onRechazarDeteccion={removeVarDeteccion}
+                                    onAudienciaActualizada={(campos) => setAudiencia(prev => prev ? { ...prev, ...campos } : prev)}
+                                />
+                            )}
+                        </div>
                     </div>
                 </aside>
             </div>
