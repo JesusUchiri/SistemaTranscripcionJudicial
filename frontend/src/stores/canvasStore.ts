@@ -76,6 +76,7 @@ interface CanvasState {
     setSegments: (segments: Segmento[]) => void
     replaceSegments: (oldIds: string[], newSegment: Segmento) => void
     updateSegmentsSpeaker: (segmentIds: string[], newSpeakerId: string) => void
+    triggerRefresh: () => void
     reset: () => void
 }
 
