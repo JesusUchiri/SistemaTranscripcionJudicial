@@ -124,6 +124,7 @@ interface HablanteInfo {
     etiqueta: string
     color: string
     nombre?: string | null
+    rol?: string
 }
 
 interface PopoverState {
