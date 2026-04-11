@@ -423,7 +423,7 @@ export default function PaginaTranscripcion() {
 
             <div className="flex flex-col lg:flex-row flex-1 min-h-0">
                 {/* ── Área de Trabajo (Canvas) ────────────────── */}
-                <div className="flex-1 flex flex-col min-w-0 bg-[#FDFCFB]">
+                <div className="flex-1 flex flex-col min-w-0 bg-[#FDFCFB] overflow-hidden">
                     {/* Barra de Herramientas Dinámica */}
                     <AnimatePresence mode="wait">
                         {(mostrarSelector || isInitializing || isTranscribing || isPaused) ? (

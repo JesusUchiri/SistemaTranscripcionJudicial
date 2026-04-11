@@ -2,7 +2,8 @@
 
 import { useState, useMemo } from 'react'
 import { Segmento } from '@/types'
-import { Check, X, AlertTriangle } from 'lucide-react'
+import { Check, X, Sparkles, Loader2 } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 
 interface RevisionBatchPanelProps {
     segmentos: Segmento[]
@@ -17,9 +18,7 @@ export default function RevisionBatchPanel({ segmentos, onAceptar, onAplicarBatc
 
     const [isApplying, setIsApplying] = useState(false)
 
-    if (propuestas.length === 0) {
-        return null
-    }
+    if (propuestas.length === 0) return null
 
     const aceptarTodas = async () => {
         setIsApplying(true)
@@ -29,67 +28,77 @@ export default function RevisionBatchPanel({ segmentos, onAceptar, onAplicarBatc
     }
 
     return (
-        <div className="absolute top-4 right-4 w-96 max-h-[80vh] flex flex-col bg-white rounded-xl shadow-2xl border border-[var(--border-subtle)] overflow-hidden z-50">
+        <div className="absolute top-6 right-8 w-[400px] max-h-[70vh] flex flex-col bg-white rounded-[32px] shadow-2xl border border-[#1B3A5C]/10 overflow-hidden z-50 animate-fade-in">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 bg-[var(--bg-secondary)] border-b border-[var(--border-subtle)]">
-                <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-[var(--accent-gold)]" />
-                    <h3 className="font-semibold text-sm text-[var(--text-primary)]">
-                        Propuestas Batch ({propuestas.length})
-                    </h3>
+            <div className="flex items-center justify-between px-6 py-4 bg-[#1B3A5C]/[0.02] border-b border-[#1B3A5C]/5">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-[#A68246]/10 text-[#A68246] rounded-xl flex items-center justify-center">
+                        <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                        <h3 className="text-xs font-bold text-[#1B3A5C] uppercase tracking-wider">Mejoras de Precisión</h3>
+                        <p className="text-[9px] font-bold text-[#1B3A5C]/40 uppercase tracking-widest">{propuestas.length} pendientes</p>
+                    </div>
                 </div>
                 <button
                     onClick={aceptarTodas}
                     disabled={isApplying}
-                    className="px-3 py-1.5 bg-[var(--accent-gold)] text-white text-xs font-medium rounded-md hover:brightness-110 disabled:opacity-50 transition-all"
+                    className="px-4 py-2 bg-[#1B3A5C] text-white text-[10px] font-bold uppercase tracking-widest rounded-xl hover:brightness-110 disabled:opacity-50 transition-all shadow-lg shadow-[#1B3A5C]/10"
                 >
-                    {isApplying ? 'Aplicando...' : 'Aceptar Todas'}
+                    {isApplying ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Aceptar Todas'}
                 </button>
             </div>
 
             {/* Content List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
-                {propuestas.map(prop => (
-                    <div key={prop.id} className="bg-white p-3 rounded-lg border border-[var(--border-subtle)] shadow-sm">
-                        <div className="flex justify-between items-start mb-2">
-                            <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                                {new Date(prop.timestamp_inicio * 1000).toISOString().substr(14, 5)}
-                            </span>
-                            <div className="flex gap-1">
-                                <button
-                                    onClick={() => onAceptar(prop.id, 'aceptar')}
-                                    className="p-1 text-green-600 hover:bg-green-50 rounded"
-                                    title="Aceptar propuesta"
-                                >
-                                    <Check className="w-4 h-4" />
-                                </button>
-                                <button
-                                    onClick={() => onAceptar(prop.id, 'rechazar')}
-                                    className="p-1 text-red-500 hover:bg-red-50 rounded"
-                                    title="Rechazar y mantener original"
-                                >
-                                    <X className="w-4 h-4" />
-                                </button>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 bg-[#FDFCFB]">
+                <AnimatePresence>
+                    {propuestas.map(prop => (
+                        <motion.div 
+                            key={prop.id} 
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, x: 20 }}
+                            className="bg-white p-4 rounded-2xl border border-[#1B3A5C]/5 shadow-sm hover:shadow-md transition-all group"
+                        >
+                            <div className="flex justify-between items-start mb-3">
+                                <span className="text-[10px] font-mono font-bold text-[#1B3A5C]/30">
+                                    TS: {new Date(prop.timestamp_inicio * 1000).toISOString().substr(14, 5)}
+                                </span>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => onAceptar(prop.id, 'rechazar')}
+                                        className="w-7 h-7 flex items-center justify-center text-red-400 hover:bg-red-50 hover:text-red-600 rounded-lg transition-all"
+                                        title="Mantener original"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                        onClick={() => onAceptar(prop.id, 'aceptar')}
+                                        className="w-7 h-7 flex items-center justify-center text-green-500 hover:bg-green-50 hover:text-green-700 rounded-lg transition-all"
+                                        title="Aplicar mejora"
+                                    >
+                                        <Check className="w-4 h-4" />
+                                    </button>
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Comparación visual */}
-                        <div className="space-y-2 text-xs">
-                            <div>
-                                <span className="block text-[10px] font-semibold text-red-500 uppercase mb-0.5">Texto Actual (Streaming)</span>
-                                <p className="line-through text-[var(--text-secondary)] bg-red-50/50 p-1.5 rounded">
-                                    {prop.texto_mejorado || prop.texto_ia}
-                                </p>
+                            <div className="space-y-3">
+                                <div className="p-2.5 bg-red-50/30 rounded-xl border border-red-100/50">
+                                    <span className="block text-[8px] font-bold text-red-400 uppercase tracking-widest mb-1">Streaming</span>
+                                    <p className="text-[11px] leading-relaxed text-red-800/60 line-through italic">
+                                        {prop.texto_mejorado || prop.texto_ia}
+                                    </p>
+                                </div>
+                                <div className="p-2.5 bg-green-50/30 rounded-xl border border-green-100/50">
+                                    <span className="block text-[8px] font-bold text-green-600 uppercase tracking-widest mb-1">Mejora Batch</span>
+                                    <p className="text-[11px] leading-relaxed text-[#1B3A5C] font-medium">
+                                        {prop.texto_batch}
+                                    </p>
+                                </div>
                             </div>
-                            <div>
-                                <span className="block text-[10px] font-semibold text-green-600 uppercase mb-0.5">Propuesta Batch (Alta Precisión)</span>
-                                <p className="text-[var(--text-primary)] bg-green-50/50 p-1.5 rounded font-medium">
-                                    {prop.texto_batch}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                ))}
+                        </motion.div>
+                    ))}
+                </AnimatePresence>
             </div>
         </div>
     )

@@ -1,17 +1,10 @@
 'use client'
 
 /**
- * ReproductorAudio — wavesurfer.js para reproducir el audio grabado.
- *
- * UI Minimalista: controles CSS sin emojis, tooltips en hover.
- *
- * Permite:
- * - Reproducción completa del audio de la audiencia
- * - Click en un segmento → salta al timestamp correspondiente
- * - Visualización de la onda con marcadores temporales
- * - Control de velocidad (0.5x → 2x) con preservación de pitch (sin chipmunk)
+ * ReproductorAudio — Refinado con estética "Tinta y Oro".
  */
 import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
+import { Play, Pause, FastForward, Loader2 } from 'lucide-react'
 
 export interface ReproductorAudioHandle {
     seekTo: (segundos: number) => void
@@ -21,11 +14,8 @@ export interface ReproductorAudioHandle {
 }
 
 interface ReproductorAudioProps {
-    /** URL del archivo de audio (servido desde backend) */
     audioUrl: string | null
-    /** Callback cuando cambia la posición del cursor de audio */
     onPosicionCambiada?: (segundos: number) => void
-    /** Callback en cada frame de reproducción para sync con canvas */
     onTimeUpdate?: (segundos: number) => void
 }
 
@@ -44,22 +34,15 @@ const ReproductorAudio = forwardRef<ReproductorAudioHandle, ReproductorAudioProp
     const [cargado, setCargado] = useState(false)
     const [errorCarga, setErrorCarga] = useState<string | null>(null)
 
-    // Exponer métodos al componente padre
     useImperativeHandle(ref, () => ({
         seekTo: (segundos: number) => {
             if (wavesurferRef.current && duracion > 0) {
                 wavesurferRef.current.seekTo(segundos / duracion)
             }
         },
-        play: () => {
-            wavesurferRef.current?.play()
-        },
-        pause: () => {
-            wavesurferRef.current?.pause()
-        },
-        getCurrentTime: () => {
-            return wavesurferRef.current?.getCurrentTime() || 0
-        },
+        play: () => wavesurferRef.current?.play(),
+        pause: () => wavesurferRef.current?.pause(),
+        getCurrentTime: () => wavesurferRef.current?.getCurrentTime() || 0,
     }), [duracion])
 
     const blobUrlRef = useRef<string | null>(null)
@@ -74,234 +57,132 @@ const ReproductorAudio = forwardRef<ReproductorAudioHandle, ReproductorAudioProp
             setCargado(false)
             setErrorCarga(null)
 
-            const token =
-                typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
+            const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
             const headers: HeadersInit = {}
             if (token) headers['Authorization'] = `Bearer ${token}`
 
-            let urlToLoad = audioUrl
             try {
                 const res = await fetch(audioUrl, { headers })
                 if (!res.ok) throw new Error('Audio no disponible')
                 const blob = await res.blob()
-                // Blob vacío o solo cabecera WAV (44 bytes) no se puede decodificar
                 if (blob.size <= 44) {
-                    setErrorCarga('La grabación está vacía o aún no hay audio.')
+                    setErrorCarga('Grabación vacía.')
                     setCargando(false)
                     return
                 }
                 const blobUrl = URL.createObjectURL(blob)
                 blobUrlRef.current = blobUrl
-                urlToLoad = blobUrl
-            } catch {
-                setErrorCarga('No se pudo cargar el audio.')
+
+                const WaveSurfer = (await import('wavesurfer.js')).default
+                ws = WaveSurfer.create({
+                    container: contenedorRef.current!,
+                    waveColor: 'rgba(27, 58, 92, 0.1)',
+                    progressColor: '#A68246',
+                    cursorColor: '#1B3A5C',
+                    barWidth: 2,
+                    barGap: 3,
+                    barRadius: 4,
+                    height: 48,
+                    normalize: true,
+                })
+
+                ws.on('ready', () => {
+                    setDuracion(ws.getDuration())
+                    setCargado(true)
+                    setCargando(false)
+                })
+
+                ws.on('audioprocess', () => {
+                    const tiempo = ws.getCurrentTime()
+                    setPosicion(tiempo)
+                    onPosicionCambiada?.(tiempo)
+                    onTimeUpdate?.(tiempo)
+                })
+
+                ws.on('play', () => setReproduciendo(true))
+                ws.on('pause', () => setReproduciendo(false))
+                ws.on('finish', () => setReproduciendo(false))
+
+                ws.load(blobUrl)
+                wavesurferRef.current = ws
+            } catch (err) {
+                setErrorCarga('Error al cargar audio.')
                 setCargando(false)
-                return
             }
-
-            const WaveSurfer = (await import('wavesurfer.js')).default
-
-            // Usar HTMLAudioElement como backend para evitar decodeAudioData (EncodingError en WAV
-            // con header incorrecto mientras el archivo aún se está escribiendo).
-            const audioEl = document.createElement('audio')
-            audioEl.preload = 'auto'
-
-            ws = WaveSurfer.create({
-                container: contenedorRef.current!,
-                waveColor: 'rgba(37, 99, 235, 0.25)',
-                progressColor: '#2563EB',
-                cursorColor: '#2563EB',
-                barWidth: 2,
-                barGap: 1,
-                barRadius: 2,
-                height: 56,
-                media: audioEl,
-            })
-
-            ws.on('ready', () => {
-                setDuracion(ws.getDuration())
-                setCargado(true)
-                setCargando(false)
-                setErrorCarga(null)
-            })
-
-            ws.on('error', () => {
-                setErrorCarga('No se pudo decodificar el audio.')
-                setCargado(false)
-                setCargando(false)
-            })
-
-            ws.on('audioprocess', () => {
-                const tiempo = ws.getCurrentTime()
-                setPosicion(tiempo)
-                onPosicionCambiada?.(tiempo)
-                onTimeUpdate?.(tiempo)
-            })
-
-            ws.on('play', () => setReproduciendo(true))
-            ws.on('pause', () => setReproduciendo(false))
-            ws.on('finish', () => setReproduciendo(false))
-
-            ws.load(urlToLoad)
-            wavesurferRef.current = ws
         }
 
         inicializar()
-
         return () => {
             ws?.destroy()
-            wavesurferRef.current = null
-            if (blobUrlRef.current) {
-                URL.revokeObjectURL(blobUrlRef.current)
-                blobUrlRef.current = null
-            }
+            if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current)
         }
     }, [audioUrl])
 
-    const toggleReproduccion = useCallback(() => {
-        wavesurferRef.current?.playPause()
-    }, [])
-
-    const saltarA = useCallback((segundos: number) => {
-        wavesurferRef.current?.seekTo(segundos / duracion)
-    }, [duracion])
-
-    const cambiarVelocidad = useCallback((nueva: number) => {
-        setVelocidad(nueva)
-        // preservePitch=true → mantiene el tono original sin efecto chipmunk
-        wavesurferRef.current?.setPlaybackRate(nueva, true)
-    }, [])
+    const cambiarVelocidad = (v: number) => {
+        setVelocidad(v)
+        wavesurferRef.current?.setPlaybackRate(v, true)
+    }
 
     const formatearTiempo = (seg: number) => {
-        const h = Math.floor(seg / 3600)
-        const min = Math.floor((seg % 3600) / 60).toString().padStart(2, '0')
+        const m = Math.floor(seg / 60).toString().padStart(2, '0')
         const s = Math.floor(seg % 60).toString().padStart(2, '0')
-        return h > 0 ? `${h}:${min}:${s}` : `${min}:${s}`
+        return `${m}:${s}`
     }
 
-    if (!audioUrl) {
-        return (
-            <div
-                className="px-4 py-4 text-sm text-center"
-                style={{ color: 'var(--text-muted)' }}
-            >
-                El audio estará disponible al finalizar la grabación.
-            </div>
-        )
-    }
-
-    if (errorCarga) {
-        return (
-            <div className="px-3 sm:px-4 py-3 sm:py-4">
-                <h3
-                    className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider mb-2 sm:mb-3"
-                    style={{ color: 'var(--text-muted)' }}
-                >
-                    Audio
-                </h3>
-                <div
-                    className="rounded-lg px-4 py-3 text-sm"
-                    style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}
-                >
-                    {errorCarga}
-                </div>
-            </div>
-        )
-    }
+    if (!audioUrl) return null
 
     return (
-        <div className="px-3 sm:px-4 py-3 sm:py-4">
-            <h3
-                className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider mb-2 sm:mb-3"
-                style={{ color: 'var(--text-muted)' }}
-            >
-                Audio
-            </h3>
-
-            {/* Onda de audio — siempre montada para que WaveSurfer tenga el contenedor */}
-            <div
-                ref={contenedorRef}
-                className="rounded-lg overflow-hidden mb-3 sm:mb-4"
-                style={{
-                    background: 'var(--bg-secondary)',
-                    display: cargando ? 'none' : 'block',
-                }}
-            />
-
-            {/* Estado de carga */}
-            {cargando && (
-                <div
-                    className="rounded-lg mb-3 sm:mb-4 flex items-center justify-center gap-2 py-4"
-                    style={{ background: 'var(--bg-secondary)', minHeight: '56px' }}
-                >
-                    <span
-                        className="w-3 h-3 rounded-full animate-spin border-2"
-                        style={{
-                            borderColor: 'var(--accent-primary)',
-                            borderTopColor: 'transparent',
-                        }}
-                    />
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        Cargando audio...
-                    </span>
-                </div>
-            )}
-
-            {/* Controles */}
-            <div className="flex items-center gap-3 sm:gap-4">
-
-                {/* Botón Play/Pause */}
-                <button
-                    onClick={toggleReproduccion}
-                    disabled={!cargado}
-                    className={`audio-control shrink-0 ${reproduciendo ? 'audio-control--pause' : 'audio-control--play'}`}
-                    data-tooltip={reproduciendo ? 'Pausar' : 'Reproducir'}
-                    style={{
-                        color: !cargado
-                            ? 'var(--text-muted)'
-                            : reproduciendo ? 'var(--danger)' : 'var(--accent-primary)',
-                        borderColor: !cargado
-                            ? 'var(--border-subtle)'
-                            : reproduciendo ? 'rgba(220, 38, 38, 0.3)' : 'var(--border-default)',
-                        width: '32px',
-                        height: '32px',
-                        opacity: !cargado ? 0.4 : 1,
-                        cursor: !cargado ? 'not-allowed' : 'pointer',
-                    }}
-                />
-
-                {/* Tiempo */}
-                <span
-                    className="text-xs sm:text-sm font-mono tabular-nums shrink-0"
-                    style={{ color: 'var(--text-secondary)' }}
-                >
-                    {cargando
-                        ? '--:--'
-                        : `${formatearTiempo(posicion)} / ${formatearTiempo(duracion)}`
-                    }
-                </span>
-
-                {/* Control de velocidad */}
-                <div className="speed-slider ml-auto gap-1 sm:gap-2 px-2 sm:px-3 py-1">
-                    <span className="text-[10px] sm:text-xs font-bold">{velocidad.toFixed(2)}x</span>
-                    <input
-                        type="range"
-                        min="0.5"
-                        max="2"
-                        step="0.25"
-                        value={velocidad}
-                        onChange={(e) => cambiarVelocidad(parseFloat(e.target.value))}
-                        className="w-10 sm:w-16"
-                        title="Velocidad de reproducción (sin cambio de tono)"
-                        disabled={!cargado}
-                    />
-                </div>
-
+        <div className="p-4 bg-white rounded-2xl border border-[#1B3A5C]/5">
+            <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#1B3A5C]/40">Registro Fonográfico</h3>
+                {cargando && <Loader2 className="w-3 h-3 animate-spin text-[#A68246]" />}
             </div>
+
+            {errorCarga ? (
+                <div className="py-4 text-center text-[10px] font-bold text-red-400 uppercase tracking-widest bg-red-50 rounded-xl">
+                    {errorCarga}
+                </div>
+            ) : (
+                <>
+                    <div ref={contenedorRef} className="mb-4" style={{ display: cargando ? 'none' : 'block' }} />
+                    
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={() => wavesurferRef.current?.playPause()}
+                            disabled={!cargado}
+                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-[#1B3A5C] text-white shadow-lg shadow-[#1B3A5C]/20 hover:scale-105 transition-all disabled:opacity-30"
+                        >
+                            {reproduciendo ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+                        </button>
+
+                        <div className="flex flex-col">
+                            <span className="text-xs font-mono font-bold text-[#1B3A5C]">
+                                {formatearTiempo(posicion)}
+                            </span>
+                            <span className="text-[9px] font-bold text-[#1B3A5C]/30 uppercase tracking-tighter">
+                                de {formatearTiempo(duracion)}
+                            </span>
+                        </div>
+
+                        <div className="ml-auto flex items-center gap-2 bg-[#1B3A5C]/5 p-1 rounded-lg">
+                            {[1, 1.5, 2].map(v => (
+                                <button
+                                    key={v}
+                                    onClick={() => cambiarVelocidad(v)}
+                                    className={`px-2 py-1 rounded-md text-[9px] font-bold transition-all ${
+                                        velocidad === v ? 'bg-white text-[#1B3A5C] shadow-sm' : 'text-[#1B3A5C]/40 hover:text-[#1B3A5C]'
+                                    }`}
+                                >
+                                    {v}x
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
 })
 
 ReproductorAudio.displayName = 'ReproductorAudio'
-
 export default ReproductorAudio

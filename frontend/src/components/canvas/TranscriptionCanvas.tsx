@@ -399,12 +399,12 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
     }))
 
     return (
-        <div className="flex-1 flex flex-col min-h-0 relative">
+        <div className="flex-1 flex flex-col min-h-0 h-full relative overflow-hidden">
             <style>{canvasStyles}</style>
             
             <div 
                 ref={containerRef}
-                className="flex-1 overflow-y-auto custom-scrollbar relative bg-white"
+                className="flex-1 overflow-y-auto custom-scrollbar relative bg-white h-full"
                 style={{ scrollPadding: '100px' }}
             >
                 <div className="max-w-[900px] mx-auto py-12 px-10">

@@ -2,6 +2,7 @@
 
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import { Bold, Italic, Heading3, AlignLeft, List, Undo2, Redo2 } from 'lucide-react'
 
 interface ActaEditorProps {
     initialContent: string
@@ -14,13 +15,13 @@ function ToolbarButton({
     active,
     disabled,
     title,
-    children,
+    icon: Icon,
 }: {
     onClick: () => void
     active?: boolean
     disabled?: boolean
     title: string
-    children: React.ReactNode
+    icon: any
 }) {
     return (
         <button
@@ -31,13 +32,13 @@ function ToolbarButton({
             }}
             disabled={disabled}
             title={title}
-            className={`px-2.5 py-1 text-xs rounded transition-colors select-none font-medium ${
+            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
                 active
-                    ? 'bg-[var(--accent-gold)] text-white'
-                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    ? 'bg-[#1B3A5C] text-white shadow-md'
+                    : 'bg-transparent text-[#1B3A5C]/60 hover:bg-[#1B3A5C]/5 hover:text-[#1B3A5C]'
+            } disabled:opacity-30 disabled:cursor-not-allowed`}
         >
-            {children}
+            <Icon className="w-4 h-4" />
         </button>
     )
 }
@@ -47,9 +48,6 @@ export default function ActaEditor({
     onChange,
     editable = true,
 }: ActaEditorProps) {
-    // La prop `key` en el componente padre controla cuándo se reinicializa el editor
-    // (cuando se cambia de versión). No usamos useEffect para resetear el contenido
-    // porque TipTap normaliza el HTML y la comparación siempre sería desigual.
     const editor = useEditor({
         extensions: [
             StarterKit.configure({
@@ -64,95 +62,71 @@ export default function ActaEditor({
         },
         editorProps: {
             attributes: {
-                class: 'prose prose-sm w-full mx-auto focus:outline-none bg-white p-8 sm:p-12 min-h-[800px] shadow-sm border border-[var(--border-subtle)] rounded outline-none',
+                class: 'prose prose-sm max-w-none focus:outline-none min-h-[800px] outline-none text-[#1A1A1A]',
             },
         },
     })
 
     if (!editor) {
         return (
-            <div
-                className="p-8 text-center text-sm"
-                style={{ color: 'var(--text-muted)' }}
-            >
-                Cargando editor...
+            <div className="p-8 text-center text-xs font-bold uppercase tracking-widest text-[#1B3A5C]/40 animate-pulse">
+                Inicializando Editor Oficial...
             </div>
         )
     }
 
     return (
-        <div className="w-full flex flex-col items-center py-8 px-4">
-            <div className="max-w-[850px] w-full">
-                {editable && (
-                    <div
-                        className="flex flex-wrap items-center gap-1 mb-3 p-2 rounded shadow-sm sticky top-[57px] z-10"
-                        style={{
-                            background: 'var(--bg-secondary)',
-                            border: '1px solid var(--border-subtle)',
-                        }}
-                    >
-                        <ToolbarButton
-                            onClick={() => editor.chain().focus().toggleBold().run()}
-                            active={editor.isActive('bold')}
-                            title="Negrita (Ctrl+B)"
-                        >
-                            Negrita
-                        </ToolbarButton>
-                        <ToolbarButton
-                            onClick={() => editor.chain().focus().toggleItalic().run()}
-                            active={editor.isActive('italic')}
-                            title="Cursiva (Ctrl+I)"
-                        >
-                            Cursiva
-                        </ToolbarButton>
-                        <div className="w-px h-5 bg-gray-200 mx-0.5" />
-                        <ToolbarButton
-                            onClick={() =>
-                                editor.chain().focus().toggleHeading({ level: 3 }).run()
-                            }
-                            active={editor.isActive('heading', { level: 3 })}
-                            title="Título de sección"
-                        >
-                            Subtítulo
-                        </ToolbarButton>
-                        <ToolbarButton
-                            onClick={() => editor.chain().focus().setParagraph().run()}
-                            active={editor.isActive('paragraph')}
-                            title="Párrafo normal"
-                        >
-                            Párrafo
-                        </ToolbarButton>
-                        <div className="w-px h-5 bg-gray-200 mx-0.5" />
-                        <ToolbarButton
-                            onClick={() => editor.chain().focus().toggleBulletList().run()}
-                            active={editor.isActive('bulletList')}
-                            title="Lista con viñetas"
-                        >
-                            Lista
-                        </ToolbarButton>
-                        <div className="w-px h-5 bg-gray-200 mx-0.5" />
-                        <ToolbarButton
-                            onClick={() => editor.chain().focus().undo().run()}
-                            disabled={!editor.can().undo()}
-                            title="Deshacer (Ctrl+Z)"
-                        >
-                            Deshacer
-                        </ToolbarButton>
-                        <ToolbarButton
-                            onClick={() => editor.chain().focus().redo().run()}
-                            disabled={!editor.can().redo()}
-                            title="Rehacer (Ctrl+Y)"
-                        >
-                            Rehacer
-                        </ToolbarButton>
-                        <span
-                            className="ml-auto text-[10px] pr-1"
-                            style={{ color: 'var(--text-muted)' }}
-                        >
-                            Ctrl+S para guardar
-                        </span>
-                    </div>
-                )}
+        <div className="w-full flex flex-col">
+            {editable && (
+                <div className="flex items-center gap-1 mb-8 p-1.5 rounded-xl bg-white border border-[#1B3A5C]/10 shadow-sm sticky top-[10px] z-10 w-max mx-auto">
+                    <ToolbarButton
+                        onClick={() => editor.chain().focus().toggleBold().run()}
+                        active={editor.isActive('bold')}
+                        title="Negrita (Ctrl+B)"
+                        icon={Bold}
+                    />
+                    <ToolbarButton
+                        onClick={() => editor.chain().focus().toggleItalic().run()}
+                        active={editor.isActive('italic')}
+                        title="Cursiva (Ctrl+I)"
+                        icon={Italic}
+                    />
+                    <div className="w-px h-5 bg-[#1B3A5C]/10 mx-1" />
+                    <ToolbarButton
+                        onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+                        active={editor.isActive('heading', { level: 3 })}
+                        title="Subtítulo"
+                        icon={Heading3}
+                    />
+                    <ToolbarButton
+                        onClick={() => editor.chain().focus().setParagraph().run()}
+                        active={editor.isActive('paragraph')}
+                        title="Párrafo"
+                        icon={AlignLeft}
+                    />
+                    <div className="w-px h-5 bg-[#1B3A5C]/10 mx-1" />
+                    <ToolbarButton
+                        onClick={() => editor.chain().focus().toggleBulletList().run()}
+                        active={editor.isActive('bulletList')}
+                        title="Lista"
+                        icon={List}
+                    />
+                    <div className="w-px h-5 bg-[#1B3A5C]/10 mx-1" />
+                    <ToolbarButton
+                        onClick={() => editor.chain().focus().undo().run()}
+                        disabled={!editor.can().undo()}
+                        title="Deshacer"
+                        icon={Undo2}
+                    />
+                    <ToolbarButton
+                        onClick={() => editor.chain().focus().redo().run()}
+                        disabled={!editor.can().redo()}
+                        title="Rehacer"
+                        icon={Redo2}
+                    />
+                </div>
+            )}
+            <div className="text-[14px] leading-relaxed">
                 <EditorContent editor={editor} />
             </div>
         </div>
