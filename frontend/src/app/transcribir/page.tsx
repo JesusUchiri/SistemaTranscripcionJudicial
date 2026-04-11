@@ -2,14 +2,6 @@
 
 /**
  * Transcribir — Página de carga y edición de audio.
- *
- * Fases:
- *   idle      → dropzone para arrastrar/seleccionar archivo
- *   selected  → formulario con campos de audiencia
- *   uploading → barra de progreso de subida
- *   editando  → editor de audio full-width (AudioEditorPre)
- *   done      → resultado con enlace a la audiencia
- *   error     → mensaje con opción de reintentar
  */
 import { useCallback, useRef, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -17,10 +9,35 @@ import api from '@/lib/api'
 import { AuthGuard } from '@/components/auth/AuthGuard'
 import { useAuthStore } from '@/stores/authStore'
 import AudioEditorPre, { ProcesarResult } from '@/components/audio/AudioEditorPre'
+import { motion, AnimatePresence } from 'framer-motion'
+import { 
+    Upload, 
+    FileAudio, 
+    ChevronRight, 
+    X, 
+    CheckCircle2, 
+    AlertCircle, 
+    Loader2,
+    Database,
+    Clock,
+    Activity
+} from 'lucide-react'
 
 type UploadPhase = 'idle' | 'selected' | 'uploading' | 'editando' | 'done' | 'error'
 
-interface EditandoData { audienciaId: string; duracion: number }
+interface EditandoData { 
+    audienciaId: string
+    duracion: number 
+}
+
+interface UploadResult {
+    audiencia_id: string
+    mensaje: string
+    total_segmentos?: number
+    hablantes_detectados?: number
+    duracion_segundos?: number
+    costo_total_usd?: number
+}
 
 const ACCEPTED = '.wav,.mp3,.mp4,.m4a,.ogg,.webm,.flac,.aac'
 const VALID_EXTS = ['wav', 'mp3', 'mp4', 'm4a', 'ogg', 'webm', 'flac', 'aac']
@@ -31,18 +48,6 @@ function fmtBytes(b: number) {
     return `${(b / 1024 ** 2).toFixed(1)} MB`
 }
 
-/* ── Icono audio ─────────────────────────────────────────────────────────── */
-function AudioIcon({ size = 40 }: { size?: number }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 18V5l12-2v13" />
-            <circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
-        </svg>
-    )
-}
-
-/* ── Main ────────────────────────────────────────────────────────────────── */
 export default function TranscribirPage() {
     const router = useRouter()
     const { logout, user } = useAuthStore()
@@ -58,7 +63,7 @@ export default function TranscribirPage() {
     const [error, setError] = useState<string | null>(null)
     const [progress, setProgress] = useState(0)
     const [editando, setEditando] = useState<EditandoData | null>(null)
-    const [result, setResult] = useState<ProcesarResult | null>(null)
+    const [result, setResult] = useState<UploadResult | null>(null)
 
     const [expediente, setExpediente] = useState('')
     const [juzgado, setJuzgado] = useState('')
@@ -70,7 +75,7 @@ export default function TranscribirPage() {
         if (f.size > 2 * 1024 ** 3) { setError('El archivo es demasiado grande. Máximo: 2GB'); return }
         const ext = f.name.split('.').pop()?.toLowerCase()
         if (!ext || !VALID_EXTS.includes(ext)) {
-            setError('Formato no soportado. Se acepta: WAV, MP3, MP4, M4A, OGG, WebM, FLAC, AAC')
+            setError('Formato no soportado.')
             return
         }
         setFile(f)
@@ -79,7 +84,7 @@ export default function TranscribirPage() {
 
     const handleSubir = async () => {
         if (!file || !expediente.trim() || !juzgado.trim()) {
-            setError('Completa Expediente y Juzgado')
+            setError('Completa los campos requeridos.')
             return
         }
         setPhase('uploading')
@@ -95,7 +100,7 @@ export default function TranscribirPage() {
 
             const { data } = await api.post('/api/transcripcion-audio/subir', fd, {
                 headers: { 'Content-Type': undefined },
-                timeout: 300_000,
+                timeout: 600_000,
                 onUploadProgress: ev => {
                     const total = ev.total ?? 0
                     if (total > 0) setProgress(Math.round((ev.loaded / total) * 100))
@@ -106,15 +111,26 @@ export default function TranscribirPage() {
             setPhase('editando')
         } catch (err: any) {
             setPhase('error')
-            setError(err.response?.data?.detail || err.message || 'Error al subir el audio.')
+            setError(err.response?.data?.detail || 'Error al subir el audio.')
         }
     }
 
-    const handleProcesado = useCallback((res: ProcesarResult) => {
-        if (editando) {
+    const handleProcesado = useCallback(async (res: ProcesarResult) => {
+        if (!editando) return
+        setPhase('uploading')
+        setProgress(100) // Indica que estamos procesando en backend
+        try {
+            await api.post('/api/transcripcion-audio/procesar', {
+                audiencia_id: editando.audienciaId,
+                regions: res.regions,
+                filters: res.filters
+            })
             router.push(`/audiencia/${editando.audienciaId}`)
+        } catch (err) {
+            setPhase('error')
+            setError('Error al iniciar procesamiento.')
         }
-    }, [router, editando])
+    }, [editando, router])
 
     const reset = () => {
         setFile(null); setPhase('idle'); setError(null); setResult(null)
@@ -122,311 +138,111 @@ export default function TranscribirPage() {
         if (fileRef.current) fileRef.current.value = ''
     }
 
-    const inEditor = phase === 'editando'
-
     return (
         <AuthGuard>
-            <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' }}>
-
-                {/* ── Header ── */}
-                <header style={{
-                    padding: '14px 24px',
-                    borderBottom: '1px solid var(--border-subtle)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    background: 'var(--bg-primary)', position: 'sticky', top: 0, zIndex: 50,
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                        <div className="logo-monogram shrink-0 cursor-pointer" onClick={() => router.push('/')}
-                            style={{ width: 34, height: 34, fontSize: 15 }}>J</div>
+            <div className="min-h-screen bg-[#FDFCFB] flex flex-col">
+                {/* ── Header Premium ────────────────────────── */}
+                <header className="px-8 py-4 bg-white border-b border-[#1B3A5C]/5 flex items-center justify-between sticky top-0 z-50">
+                    <div className="flex items-center gap-4">
+                        <div className="logo-monogram cursor-pointer" onClick={() => router.push('/dashboard')}>J</div>
                         <div>
-                            <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
-                                {inEditor && editando
-                                    ? `Editando: ${file?.name ?? 'audio'}`
-                                    : 'Transcripción de Audio'}
-                            </h1>
-                            {inEditor && editando && (
-                                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                    Recorta, filtra y transcribe — solo se envía lo que selecciones
-                                </p>
-                            )}
+                            <h1 className="text-sm font-bold text-[#1B3A5C]">Carga de Archivo</h1>
+                            <p className="text-[10px] uppercase tracking-widest text-[#A68246] font-bold">Ingreso de Audio Oficial</p>
                         </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                        {inEditor && (
-                            <button onClick={reset} className="btn-secondary" style={{ fontSize: 12 }}>
-                                ← Cancelar
-                            </button>
-                        )}
-                        <button onClick={() => router.push('/')} className="btn-secondary" style={{ fontSize: 12 }}>
-                            Dashboard
-                        </button>
-                        <button onClick={async () => { await logout(); router.push('/login') }}
-                            className="btn-secondary" style={{ fontSize: 12 }}>
-                            Salir
-                        </button>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => router.push('/dashboard')} className="btn-secondary !text-xs !py-2">Dashboard</button>
+                        <button onClick={async () => { await logout(); router.push('/login') }} className="text-[10px] font-bold text-[#1B3A5C]/40 uppercase tracking-widest hover:text-red-500 transition-all">Salir</button>
                     </div>
                 </header>
 
-                {/* ── Main ── */}
-                <main style={{
-                    flex: 1,
-                    width: '100%',
-                    maxWidth: inEditor ? '1280px' : '680px',
-                    margin: '0 auto',
-                    padding: inEditor ? '24px 24px' : '40px 24px',
-                    boxSizing: 'border-box',
-                }}>
-
-                    {/* ── IDLE: dropzone ── */}
-                    {phase === 'idle' && (
-                        <div
-                            className="upload-dropzone"
-                            onDrop={e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) selectFile(f) }}
-                            onDragOver={e => { e.preventDefault(); setDrag(true) }}
-                            onDragLeave={() => setDrag(false)}
-                            onClick={() => fileRef.current?.click()}
-                            style={{
-                                borderColor: drag ? 'var(--brand-ink)' : undefined,
-                                background: drag ? 'rgba(37,99,235,0.04)' : undefined,
-                                minHeight: 220, cursor: 'pointer',
-                            }}
-                        >
-                            <input ref={fileRef} type="file" accept={ACCEPTED} className="hidden"
-                                onChange={e => { const f = e.target.files?.[0]; if (f) selectFile(f) }} />
-                            <div style={{ color: 'var(--text-muted)', marginBottom: 16 }}>
-                                <AudioIcon size={48} />
-                            </div>
-                            <p style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
-                                Arrastra tu audio aquí
-                            </p>
-                            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
-                                WAV · MP3 · M4A · FLAC · OGG · WebM · AAC — hasta 2 GB
-                            </p>
-                            <button className="btn-secondary" style={{ fontSize: 13, pointerEvents: 'none' }}>
-                                o selecciona archivo
-                            </button>
-                        </div>
-                    )}
-
-                    {/* ── SELECTED: formulario ── */}
-                    {phase === 'selected' && file && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                            {/* Tarjeta del archivo */}
-                            <div style={{
-                                display: 'flex', alignItems: 'center', gap: 14,
-                                padding: '14px 18px', borderRadius: 12,
-                                background: 'var(--bg-secondary)',
-                                border: '1px solid var(--border-subtle)',
-                            }}>
-                                <div style={{
-                                    width: 44, height: 44, borderRadius: 10,
-                                    background: 'rgba(37,99,235,0.1)',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    color: 'var(--accent-primary)', flexShrink: 0,
-                                }}>
-                                    <AudioIcon size={22} />
+                <main className="flex-1 max-w-4xl mx-auto w-full px-8 py-12">
+                    <AnimatePresence mode="wait">
+                        {phase === 'idle' && (
+                            <motion.div 
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -20 }}
+                                className="upload-dropzone min-h-[300px] rounded-[40px] border-2 border-dashed border-[#1B3A5C]/10 bg-white flex flex-col items-center justify-center p-12 cursor-pointer hover:border-[#A68246]/30 hover:bg-[#FDFCFB] transition-all group"
+                                onClick={() => fileRef.current?.click()}
+                                onDrop={e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) selectFile(f) }}
+                                onDragOver={e => { e.preventDefault(); setDrag(true) }}
+                                onDragLeave={() => setDrag(false)}
+                            >
+                                <input ref={fileRef} type="file" accept={ACCEPTED} className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) selectFile(f) }} />
+                                <div className="w-20 h-20 bg-[#1B3A5C]/5 text-[#1B3A5C]/20 rounded-[32px] flex items-center justify-center mb-6 group-hover:scale-110 group-hover:text-[#A68246] group-hover:bg-[#A68246]/5 transition-all">
+                                    <Upload className="w-10 h-10" />
                                 </div>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {file.name}
-                                    </p>
-                                    <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{fmtBytes(file.size)}</p>
+                                <h3 className="text-xl font-bold text-[#1B3A5C] mb-2">Comience la Carga</h3>
+                                <p className="text-sm text-[#1B3A5C]/40 text-center max-w-xs">Arrastre el archivo de audio o haga clic para seleccionar desde su equipo.</p>
+                                <div className="mt-8 flex gap-4">
+                                    <span className="px-3 py-1 bg-[#1B3A5C]/5 rounded-lg text-[9px] font-bold text-[#1B3A5C]/40 uppercase tracking-widest">WAV · MP3 · MP4</span>
+                                    <span className="px-3 py-1 bg-[#1B3A5C]/5 rounded-lg text-[9px] font-bold text-[#1B3A5C]/40 uppercase tracking-widest">Máximo 2GB</span>
                                 </div>
-                                <button onClick={reset} style={{
-                                    background: 'none', border: 'none', cursor: 'pointer',
-                                    color: 'var(--text-muted)', fontSize: 18, padding: 4,
-                                }}>×</button>
-                            </div>
+                            </motion.div>
+                        )}
 
-                            {/* Formulario */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                                <Field label="Expediente *" placeholder="Ej: 00123-2024-0-1001-JR-PE-01"
-                                    value={expediente} onChange={setExpediente} />
-                                <Field label="Juzgado *" placeholder="Ej: Juzgado Penal de Cusco"
-                                    value={juzgado} onChange={setJuzgado} />
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                                    <SelectField label="Tipo de Audiencia" value={tipo} onChange={setTipo}
-                                        options={['Audiencia General', 'Audiencia Preliminar', 'Juicio Oral', 'Audiencia de Control', 'Audiencia de Apelación']} />
-                                    <SelectField label="Instancia" value={instancia} onChange={setInstancia}
-                                        options={['Primera Instancia', 'Segunda Instancia', 'Sala Suprema']} />
+                        {phase === 'selected' && file && (
+                            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-10">
+                                <div className="p-6 bg-white rounded-[32px] border border-[#1B3A5C]/5 shadow-xl shadow-[#1B3A5C]/5 flex items-center gap-6">
+                                    <div className="w-16 h-16 bg-[#A68246]/10 text-[#A68246] rounded-2xl flex items-center justify-center">
+                                        <FileAudio className="w-8 h-8" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <h4 className="text-sm font-bold text-[#1B3A5C] truncate">{file.name}</h4>
+                                        <p className="text-xs text-[#1B3A5C]/40 font-bold uppercase tracking-widest">{fmtBytes(file.size)}</p>
+                                    </div>
+                                    <button onClick={reset} className="p-2 text-[#1B3A5C]/20 hover:text-red-500 transition-colors"><X className="w-6 h-6" /></button>
                                 </div>
 
-                                {error && (
-                                    <p style={{ fontSize: 13, color: '#dc2626', padding: '8px 12px', background: 'rgba(220,38,38,0.08)', borderRadius: 8 }}>
-                                        {error}
-                                    </p>
-                                )}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C]/40 ml-1">N° Expediente *</label>
+                                        <input type="text" value={expediente} onChange={e => setExpediente(e.target.value)} placeholder="00XXX-202X..." className="w-full px-5 py-4 bg-white border border-[#1B3A5C]/10 rounded-2xl text-sm focus:ring-2 focus:ring-[#A68246]/20 transition-all outline-none" />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-bold uppercase tracking-widest text-[#1B3A5C]/40 ml-1">Juzgado *</label>
+                                        <input type="text" value={juzgado} onChange={e => setJuzgado(e.target.value)} placeholder="Nombre de la sede..." className="w-full px-5 py-4 bg-white border border-[#1B3A5C]/10 rounded-2xl text-sm focus:ring-2 focus:ring-[#A68246]/20 transition-all outline-none" />
+                                    </div>
+                                </div>
 
-                                <button onClick={handleSubir}
-                                    disabled={!expediente.trim() || !juzgado.trim()}
-                                    className="btn-primary"
-                                    style={{ padding: '14px 0', fontSize: 15, opacity: (!expediente.trim() || !juzgado.trim()) ? 0.5 : 1 }}>
-                                    Subir y editar audio →
+                                <button onClick={handleSubir} className="w-full py-5 bg-[#1B3A5C] text-white rounded-[24px] font-bold text-sm uppercase tracking-[0.2em] shadow-2xl shadow-[#1B3A5C]/20 hover:brightness-110 transition-all flex items-center justify-center gap-3">
+                                    Subir y Editar Audio <ChevronRight className="w-5 h-5" />
                                 </button>
-                                <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-                                    El audio se optimiza automáticamente — el original pesado se elimina al subir
-                                </p>
-                            </div>
-                        </div>
-                    )}
+                            </motion.div>
+                        )}
 
-                    {/* ── UPLOADING ── */}
-                    {phase === 'uploading' && (
-                        <div style={{ textAlign: 'center', padding: '60px 0' }}>
-                            <div style={{
-                                width: 60, height: 60, borderRadius: '50%',
-                                border: '4px solid var(--border-subtle)',
-                                borderTopColor: 'var(--accent-gold)',
-                                animation: 'spin 0.9s linear infinite',
-                                margin: '0 auto 20px',
-                            }} />
-                            <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
-                                Subiendo audio...
-                            </h3>
-                            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
-                                {progress < 100
-                                    ? 'Transfiriendo archivo al servidor'
-                                    : 'Optimizando y guardando...'}
-                            </p>
-                            <div style={{ width: '100%', maxWidth: 340, margin: '0 auto' }}>
-                                <div style={{ height: 6, borderRadius: 3, background: 'var(--bg-secondary)', overflow: 'hidden' }}>
-                                    <div style={{
-                                        height: '100%', borderRadius: 3,
-                                        width: `${progress}%`,
-                                        background: 'var(--accent-gold)',
-                                        transition: 'width 0.3s ease',
-                                    }} />
+                        {phase === 'uploading' && (
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-20">
+                                <div className="relative mb-10">
+                                    <div className="w-24 h-24 border-4 border-[#A68246]/10 rounded-full" />
+                                    <div className="absolute inset-0 w-24 h-24 border-4 border-[#A68246] border-t-transparent rounded-full animate-spin" />
+                                    <div className="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold text-[#1B3A5C]">{progress}%</div>
                                 </div>
-                                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>{progress}%</p>
-                            </div>
-                        </div>
-                    )}
+                                <h3 className="text-xl font-bold text-[#1B3A5C] mb-2">Transfiriendo Expediente</h3>
+                                <p className="text-xs text-[#1B3A5C]/40 font-bold uppercase tracking-widest">Sincronización con Servidores Judiciales</p>
+                            </motion.div>
+                        )}
 
-                    {/* ── EDITANDO: layout full-width ── */}
-                    {phase === 'editando' && file && (
-                        <AudioEditorPre
-                            file={file}
-                            onProcess={handleProcesado}
-                            onCancel={() => setPhase('idle')}
-                        />
-                    )}
+                        {phase === 'editando' && file && (
+                            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="fixed inset-0 z-[100]">
+                                <AudioEditorPre file={file} onProcess={handleProcesado} onCancel={() => setPhase('selected')} />
+                            </motion.div>
+                        )}
 
-                    {/* ── DONE ── */}
-                    {phase === 'done' && result && (
-                        <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-                            <div style={{
-                                width: 72, height: 72, borderRadius: '50%',
-                                background: 'rgba(22,163,74,0.12)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                margin: '0 auto 20px',
-                            }}>
-                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5">
-                                    <polyline points="20 6 9 17 4 12" />
-                                </svg>
-                            </div>
-                            <h3 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
-                                Transcripción completa
-                            </h3>
-                            <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24 }}>
-                                {result.mensaje}
-                            </p>
-                            <div style={{
-                                display: 'inline-flex', gap: 32, padding: '14px 28px',
-                                borderRadius: 12, background: 'var(--bg-secondary)',
-                                border: '1px solid var(--border-subtle)', marginBottom: 32,
-                            }}>
-                                <Stat label="Segmentos" value={result.total_segmentos} />
-                                <Stat label="Hablantes" value={result.hablantes_detectados} />
-                                {result.costo_total_usd > 0 && (
-                                    <Stat label="Costo (USD)" value={`$${result.costo_total_usd.toFixed(4)}` as any} />
-                                )}
-                            </div>
-                            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-                                <button onClick={() => router.push(`/audiencia/${result.audiencia_id}`)} className="btn-primary" style={{ padding: '12px 32px' }}>
-                                    Ver transcripción →
-                                </button>
-                                <button onClick={reset} className="btn-secondary">
-                                    Subir otro audio
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* ── ERROR ── */}
-                    {phase === 'error' && error && (
-                        <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-                            <div style={{
-                                width: 64, height: 64, borderRadius: '50%',
-                                background: 'rgba(220,38,38,0.1)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                margin: '0 auto 20px',
-                            }}>
-                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2">
-                                    <circle cx="12" cy="12" r="10" />
-                                    <line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-                                </svg>
-                            </div>
-                            <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Error al procesar</h3>
-                            <p style={{ fontSize: 13, color: '#dc2626', marginBottom: 24, maxWidth: 400, margin: '0 auto 24px' }}>{error}</p>
-                            <button onClick={reset} className="btn-secondary">Intentar de nuevo</button>
-                        </div>
-                    )}
-
+                        {phase === 'error' && (
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-20">
+                                <div className="w-20 h-20 bg-red-50 text-red-500 rounded-[32px] flex items-center justify-center mx-auto mb-8">
+                                    <AlertCircle className="w-10 h-10" />
+                                </div>
+                                <h3 className="text-xl font-bold text-[#1B3A5C] mb-2">Error de Procesamiento</h3>
+                                <p className="text-sm text-red-600/60 mb-10 max-w-sm mx-auto">{error}</p>
+                                <button onClick={reset} className="btn-secondary !py-3 !px-8">Reintentar Carga</button>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </main>
             </div>
         </AuthGuard>
-    )
-}
-
-/* ── Pequeños componentes de UI ─────────────────────────────────────────── */
-
-function Field({ label, placeholder, value, onChange }: {
-    label: string; placeholder: string; value: string; onChange: (v: string) => void
-}) {
-    return (
-        <div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 6 }}>
-                {label}
-            </label>
-            <input
-                type="text" placeholder={placeholder} value={value}
-                onChange={e => onChange(e.target.value)}
-                style={{
-                    width: '100%', padding: '10px 14px', borderRadius: 10, boxSizing: 'border-box',
-                    border: '1.5px solid var(--border-subtle)',
-                    background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14,
-                    outline: 'none', transition: 'border-color 0.15s',
-                }}
-            />
-        </div>
-    )
-}
-
-function SelectField({ label, value, onChange, options }: {
-    label: string; value: string; onChange: (v: string) => void; options: string[]
-}) {
-    return (
-        <div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 6 }}>
-                {label}
-            </label>
-            <select value={value} onChange={e => onChange(e.target.value)} style={{
-                width: '100%', padding: '10px 14px', borderRadius: 10, boxSizing: 'border-box',
-                border: '1.5px solid var(--border-subtle)',
-                background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14,
-                outline: 'none', cursor: 'pointer',
-            }}>
-                {options.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
-        </div>
-    )
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-    return (
-        <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>{value}</p>
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{label}</p>
-        </div>
     )
 }
