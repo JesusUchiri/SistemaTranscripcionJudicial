@@ -16,6 +16,7 @@ import {
     Wand2, 
     Mic2,
     Check,
+    X,
     Loader2
 } from 'lucide-react'
 
