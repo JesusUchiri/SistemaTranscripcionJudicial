@@ -303,13 +303,11 @@ export default function TranscribirPage() {
                     )}
 
                     {/* ── EDITANDO: layout full-width ── */}
-                    {phase === 'editando' && editando && (
+                    {phase === 'editando' && file && (
                         <AudioEditorPre
-                            audienciaId={editando.audienciaId}
-                            duracion={editando.duracion}
-                            filename={file?.name}
-                            onProcesado={handleProcesado}
-                            onCancelar={reset}
+                            file={file}
+                            onProcess={handleProcesado}
+                            onCancel={() => setPhase('idle')}
                         />
                     )}
 
