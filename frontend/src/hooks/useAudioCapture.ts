@@ -21,10 +21,10 @@ function float32ToInt16Base64(float32: Float32Array): string {
         const s = Math.max(-1, Math.min(1, float32[i]))
         int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff
     }
+    // Usar Buffer (si está disponible vía polyfill) o un método robusto
     const bytes = new Uint8Array(int16.buffer)
     let binary = ''
-    // Procesar en bloques pequeños para total seguridad
-    for (let i = 0; i < bytes.length; i++) {
+    for (let i = 0; i < bytes.byteLength; i++) {
         binary += String.fromCharCode(bytes[i])
     }
     return btoa(binary)
