@@ -14,7 +14,7 @@ import { SpeakerNode, SegmentMark, LowConfidenceMark, BookmarkNode, ProvisionalN
 import WordCorrectionPopover from './WordCorrectionPopover'
 import type { Segmento } from '@/types'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CheckCircle2, UserCircle2, MessageSquare, ListFilter, Users } from 'lucide-react'
+import { CheckCircle2, UserCircle2, MessageSquare, ListFilter, Users, Scale, Activity } from 'lucide-react'
 
 /* ── Estilos Inyectados para el Canvas ──────────────── */
 const canvasStyles = `
