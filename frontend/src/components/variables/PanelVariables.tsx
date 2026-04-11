@@ -92,7 +92,7 @@ export default function PanelVariables({
                 Variables de Plantilla
                 <span
                     className="text-[8px] px-1.5 py-0.5 font-mono"
-                    style={{ background: 'var(--accent-soft)', color: 'var(--accent-gold)', border: '1px solid var(--accent-gold)/20' }}
+                    style={{ background: 'var(--brand-gold-muted)', color: 'var(--accent-gold)', border: '1px solid var(--brand-gold)/20' }}
                 >
                     {'{{'}'{'}}'}
                 </span>

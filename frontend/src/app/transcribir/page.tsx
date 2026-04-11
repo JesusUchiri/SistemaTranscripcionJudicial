@@ -184,7 +184,7 @@ export default function TranscribirPage() {
                             onDragLeave={() => setDrag(false)}
                             onClick={() => fileRef.current?.click()}
                             style={{
-                                borderColor: drag ? 'var(--accent-primary)' : undefined,
+                                borderColor: drag ? 'var(--brand-ink)' : undefined,
                                 background: drag ? 'rgba(37,99,235,0.04)' : undefined,
                                 minHeight: 220, cursor: 'pointer',
                             }}

@@ -2,16 +2,12 @@
 
 /**
  * WordCorrectionPopover — Popover para corregir palabras usando IA.
- *
- * Analiza el contexto de la frase con Claude y muestra:
- * - La frase completa con la palabra resaltada
- * - Sugerencias inteligentes basadas en contexto judicial
- * - La frase corregida completa
- * - Tipo de segmento (pregunta, afirmación, etc.)
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { analyzeWordInContext, type WordAnalysisResult, type Suggestion } from '@/lib/contextAnalysis'
+import { analyzeWordInContext, type WordAnalysisResult } from '@/lib/contextAnalysis'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Check, X, Sparkles, Loader2, MessageSquare } from 'lucide-react'
 
 export interface WordAlternative {
     word: string
@@ -49,28 +45,21 @@ export default function WordCorrectionPopover({
     const [aiResult, setAiResult] = useState<WordAnalysisResult | null>(null)
     const popoverRef = useRef<HTMLDivElement>(null)
 
-    // Llamar a la IA cuando se abre el popover
     useEffect(() => {
         if (isOpen && sentenceContext && originalWord) {
             setIsAnalyzing(true)
             setAiResult(null)
-
             analyzeWordInContext(originalWord, sentenceContext, confidence)
                 .then(result => {
                     setAiResult(result)
                     setIsAnalyzing(false)
                 })
-                .catch(() => {
-                    setIsAnalyzing(false)
-                })
+                .catch(() => setIsAnalyzing(false))
         }
     }, [isOpen, originalWord, sentenceContext, confidence])
 
-    // Combinar sugerencias de IA con las de Deepgram
     const allSuggestions = useMemo(() => {
         const combined: Array<{ word: string; confidence: number; reason?: string }> = []
-
-        // Primero las sugerencias de IA (tienen razón contextual)
         if (aiResult?.suggestions) {
             aiResult.suggestions.forEach(s => {
                 if (!combined.find(c => c.word.toLowerCase() === s.word.toLowerCase())) {
@@ -78,21 +67,15 @@ export default function WordCorrectionPopover({
                 }
             })
         }
-
-        // Luego las alternativas de Deepgram
         alternatives.forEach(alt => {
             if (!combined.find(c => c.word.toLowerCase() === alt.word.toLowerCase())) {
                 combined.push({ word: alt.word, confidence: alt.confidence })
             }
         })
-
         return combined.slice(0, 5)
     }, [aiResult, alternatives])
 
-    // Tipo de segmento detectado
     const detectedType = aiResult?.segment_type || segmentType || 'afirmación'
-
-    // Frase corregida
     const correctedSentence = aiResult?.corrected_sentence || sentenceContext
 
     useEffect(() => {
@@ -103,420 +86,143 @@ export default function WordCorrectionPopover({
         }
     }, [isOpen])
 
-    // Cerrar al hacer click fuera
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
-            if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-                onClose()
-            }
+            if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) onClose()
         }
-
         if (isOpen) {
             document.addEventListener('mousedown', handleClickOutside)
             return () => document.removeEventListener('mousedown', handleClickOutside)
         }
     }, [isOpen, onClose])
 
-    // Atajos de teclado
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (!isOpen) return
-
-            if (e.key === 'Escape') {
-                onClose()
-            } else if (e.key === 'Enter') {
-                if (selectedIndex !== null && allSuggestions[selectedIndex]) {
-                    onSelect(allSuggestions[selectedIndex].word)
-                }
+            if (e.key === 'Escape') onClose()
+            else if (e.key === 'Enter') {
+                if (selectedIndex !== null && allSuggestions[selectedIndex]) onSelect(allSuggestions[selectedIndex].word)
             } else if (e.key >= '1' && e.key <= '5') {
                 const index = parseInt(e.key) - 1
-                if (index < allSuggestions.length) {
-                    onSelect(allSuggestions[index].word)
-                }
+                if (index < allSuggestions.length) onSelect(allSuggestions[index].word)
             }
         }
-
         if (isOpen) {
             document.addEventListener('keydown', handleKeyDown)
             return () => document.removeEventListener('keydown', handleKeyDown)
         }
     }, [isOpen, selectedIndex, allSuggestions, onSelect, onClose])
 
-    const handleCustomSubmit = () => {
-        if (customWord.trim()) {
-            onSelect(customWord.trim())
-        }
-    }
-
-    // Aplicar frase corregida completa
-    const handleApplyCorrectedSentence = useCallback(() => {
-        if (correctedSentence && correctedSentence !== sentenceContext) {
-            // Aquí podrías emitir un evento especial para reemplazar toda la frase
-            // Por ahora solo cerramos el popover
-            onClose()
-        }
-    }, [correctedSentence, sentenceContext, onClose])
-
     if (!isOpen) return null
 
     const confidencePercent = Math.round(confidence * 100)
-    const confidenceColor = confidence >= 0.85 ? '#059669' : confidence >= 0.7 ? '#D97706' : '#DC2626'
-
-    const typeLabels: Record<string, { label: string; color: string; icon: string }> = {
-        pregunta: { label: 'PREGUNTA', color: '#2563EB', icon: '?' },
-        afirmación: { label: 'AFIRMACIÓN', color: '#059669', icon: '.' },
-        respuesta: { label: 'RESPUESTA', color: '#7C3AED', icon: '→' },
-        declaración: { label: 'DECLARACIÓN', color: '#DC2626', icon: '!' },
-    }
-    const typeInfo = typeLabels[detectedType] || typeLabels.afirmación
-
-    // Resaltar la palabra en el contexto
-    const highlightWord = (text: string, word: string) => {
-        const regex = new RegExp(`\\b${word}\\b`, 'gi')
-        return text.replace(regex, `<mark style="background: #FEF3C7; padding: 1px 4px; border-radius: 3px; font-weight: 600;">${word}</mark>`)
-    }
+    const confidenceColor = confidence >= 0.85 ? '#16a34a' : confidence >= 0.7 ? '#ca8a04' : '#dc2626'
 
     return (
-        <div
+        <motion.div
             ref={popoverRef}
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className="fixed z-[100] bg-white rounded-[24px] shadow-2xl border border-[#1B3A5C]/10 w-[420px] overflow-hidden"
             style={{
-                position: 'fixed',
-                left: `${Math.min(position.x, window.innerWidth - 440)}px`,
-                top: `${Math.min(position.y + 10, window.innerHeight - 500)}px`,
-                zIndex: 1000,
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-default)',
-                borderRadius: '12px',
-                boxShadow: '0 20px 60px rgba(0, 0, 0, 0.25)',
-                padding: '0',
-                minWidth: '400px',
-                maxWidth: '460px',
-                overflow: 'hidden',
+                left: `${Math.min(position.x, typeof window !== 'undefined' ? window.innerWidth - 440 : 0)}px`,
+                top: `${Math.min(position.y + 10, typeof window !== 'undefined' ? window.innerHeight - 500 : 0)}px`,
             }}
         >
             {/* Header */}
-            <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '12px 16px',
-                background: 'var(--bg-secondary)',
-                borderBottom: '1px solid var(--border-subtle)',
-            }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{
-                        width: '28px',
-                        height: '28px',
-                        borderRadius: '6px',
-                        background: `${typeInfo.color}15`,
-                        color: typeInfo.color,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '14px',
-                        fontWeight: 700,
-                    }}>
-                        {typeInfo.icon}
+            <div className="px-6 py-4 bg-[#1B3A5C]/[0.02] border-b border-[#1B3A5C]/5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-[#1B3A5C]/5 text-[#1B3A5C] rounded-xl flex items-center justify-center">
+                        <MessageSquare className="w-4 h-4" />
                     </div>
                     <div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                            Análisis de Palabra
-                        </div>
-                        <div style={{ fontSize: '10px', color: typeInfo.color, fontWeight: 600 }}>
-                            {typeInfo.label}
-                        </div>
+                        <h3 className="text-xs font-bold text-[#1B3A5C] uppercase tracking-wider">Análisis Judicial</h3>
+                        <p className="text-[9px] font-bold text-[#1B3A5C]/40 uppercase tracking-widest">{detectedType}</p>
                     </div>
                 </div>
-                <button
-                    onClick={onClose}
-                    style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: 'var(--text-muted)',
-                        cursor: 'pointer',
-                        padding: '6px',
-                        borderRadius: '4px',
-                        fontSize: '16px',
-                    }}
-                >
-                    ✕
-                </button>
+                <button onClick={onClose} className="p-2 text-[#1B3A5C]/20 hover:text-[#1B3A5C] transition-colors"><X className="w-4 h-4" /></button>
             </div>
 
-            <div style={{ padding: '16px' }}>
-                {/* Contexto de la frase */}
-                {sentenceContext && (
-                    <div style={{ marginBottom: '16px' }}>
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 700 }}>
-                            FRASE ORIGINAL
-                        </div>
-                        <div
-                            style={{
-                                background: 'var(--bg-primary)',
-                                padding: '12px 14px',
-                                borderRadius: '8px',
-                                fontSize: '14px',
-                                lineHeight: '1.7',
-                                color: 'var(--text-primary)',
-                                borderLeft: `3px solid ${confidenceColor}`,
-                            }}
-                            dangerouslySetInnerHTML={{ __html: highlightWord(sentenceContext, originalWord) }}
-                        />
-                    </div>
-                )}
-
-                {/* Palabra y confianza */}
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    marginBottom: '16px',
-                    padding: '10px 14px',
-                    background: `${confidenceColor}08`,
-                    borderRadius: '8px',
-                    border: `1px solid ${confidenceColor}20`,
-                }}>
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>
-                        PALABRA:
-                    </span>
-                    <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                        &quot;{originalWord}&quot;
-                    </span>
-                    <span style={{
-                        fontSize: '12px',
-                        padding: '3px 10px',
-                        borderRadius: '20px',
-                        background: confidenceColor,
-                        color: 'white',
-                        fontWeight: 700,
-                    }}>
-                        {confidencePercent}%
-                    </span>
+            <div className="p-6 space-y-6">
+                {/* Contexto */}
+                <div className="space-y-2">
+                    <span className="text-[9px] font-bold text-[#1B3A5C]/30 uppercase tracking-widest">Frase Original</span>
+                    <p className="text-xs leading-relaxed text-[#1B3A5C] p-3 bg-[#F7F5F2] rounded-xl border-l-4" style={{ borderColor: confidenceColor }}>
+                        {sentenceContext}
+                    </p>
                 </div>
 
-                {/* Estado de análisis IA */}
-                {isAnalyzing && (
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        padding: '12px 14px',
-                        background: 'var(--bg-primary)',
-                        borderRadius: '8px',
-                        marginBottom: '16px',
-                    }}>
-                        <div className="skeleton-shimmer" style={{
-                            width: '20px',
-                            height: '20px',
-                            borderRadius: '50%',
-                        }} />
-                        <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                            Analizando contexto con IA...
-                        </span>
+                {/* Palabra y Confianza */}
+                <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-[#1B3A5C]/5 shadow-sm">
+                    <div className="flex flex-col">
+                        <span className="text-[8px] font-bold text-[#1B3A5C]/30 uppercase">Palabra Detectada</span>
+                        <span className="text-lg font-bold text-[#1B3A5C] tracking-tight">"{originalWord}"</span>
                     </div>
-                )}
-
-                {/* Explicación de IA */}
-                {aiResult?.explanation && !aiResult.is_correct && (
-                    <div style={{
-                        padding: '10px 14px',
-                        background: '#FEF3C7',
-                        borderRadius: '8px',
-                        marginBottom: '16px',
-                        fontSize: '13px',
-                        color: '#92400E',
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '8px',
-                    }}>
-                        <span style={{ fontSize: '16px' }}>💡</span>
-                        <span>{aiResult.explanation}</span>
+                    <div className="text-right">
+                        <span className="text-[8px] font-bold text-[#1B3A5C]/30 uppercase block">Confianza</span>
+                        <span className="text-sm font-mono font-bold" style={{ color: confidenceColor }}>{confidencePercent}%</span>
                     </div>
-                )}
+                </div>
 
-                {/* Palabra correcta según IA */}
-                {aiResult?.is_correct && (
-                    <div style={{
-                        padding: '10px 14px',
-                        background: '#D1FAE5',
-                        borderRadius: '8px',
-                        marginBottom: '16px',
-                        fontSize: '13px',
-                        color: '#065F46',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                    }}>
-                        <span style={{ fontSize: '16px' }}>✓</span>
-                        <span>La IA confirma que &quot;{originalWord}&quot; es correcta en este contexto</span>
-                    </div>
-                )}
-
-                {/* Sugerencias */}
-                {allSuggestions.length > 0 && (
-                    <div style={{ marginBottom: '16px' }}>
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: 700 }}>
-                            SUGERENCIAS DE CORRECCIÓN
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            {allSuggestions.map((sug, index) => (
+                {/* Sugerencias IA */}
+                <div className="space-y-3">
+                    <span className="text-[9px] font-bold text-[#A68246] uppercase tracking-widest flex items-center gap-2">
+                        <Sparkles className="w-3 h-3" /> Sugerencias de Precisión
+                    </span>
+                    <div className="space-y-2">
+                        {isAnalyzing ? (
+                            <div className="flex items-center gap-3 p-4 bg-[#FDFCFB] rounded-xl border border-dashed border-[#1B3A5C]/10">
+                                <Loader2 className="w-4 h-4 animate-spin text-[#A68246]" />
+                                <span className="text-[10px] font-bold text-[#1B3A5C]/40 uppercase">Consultando Claude AI...</span>
+                            </div>
+                        ) : (
+                            allSuggestions.map((sug, i) => (
                                 <button
-                                    key={index}
+                                    key={i}
                                     onClick={() => onSelect(sug.word)}
-                                    onMouseEnter={() => setSelectedIndex(index)}
-                                    onMouseLeave={() => setSelectedIndex(null)}
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        padding: '10px 14px',
-                                        background: selectedIndex === index ? 'var(--accent-soft)' : 'var(--bg-primary)',
-                                        border: selectedIndex === index ? '2px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                                        borderRadius: '8px',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.15s',
-                                        textAlign: 'left',
-                                        gap: '12px',
-                                    }}
+                                    className="w-full flex items-center justify-between p-3 bg-white hover:bg-[#1B3A5C]/5 rounded-xl border border-[#1B3A5C]/5 transition-all text-left group"
                                 >
-                                    <span style={{
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        background: selectedIndex === index ? 'var(--accent-primary)' : 'var(--bg-secondary)',
-                                        color: selectedIndex === index ? 'white' : 'var(--text-muted)',
-                                        width: '24px',
-                                        height: '24px',
-                                        borderRadius: '6px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                    }}>
-                                        {index + 1}
-                                    </span>
-                                    <div style={{ flex: 1 }}>
-                                        <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                            {sug.word}
+                                    <div className="flex items-center gap-3">
+                                        <span className="w-5 h-5 flex items-center justify-center rounded-lg bg-[#1B3A5C]/5 text-[#1B3A5C]/40 text-[10px] font-bold group-hover:bg-[#1B3A5C] group-hover:text-white transition-all">{i + 1}</span>
+                                        <div className="flex flex-col">
+                                            <span className="text-xs font-bold text-[#1B3A5C]">{sug.word}</span>
+                                            {sug.reason && <span className="text-[9px] text-[#1B3A5C]/40">{sug.reason}</span>}
                                         </div>
-                                        {sug.reason && (
-                                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                                {sug.reason}
-                                            </div>
-                                        )}
                                     </div>
-                                    <span style={{
-                                        fontSize: '11px',
-                                        color: 'var(--text-muted)',
-                                        background: 'var(--bg-secondary)',
-                                        padding: '2px 8px',
-                                        borderRadius: '10px',
-                                    }}>
-                                        {Math.round(sug.confidence * 100)}%
-                                    </span>
+                                    <span className="text-[9px] font-mono text-[#1B3A5C]/20">{Math.round(sug.confidence * 100)}%</span>
                                 </button>
-                            ))}
-                        </div>
+                            ))
+                        )}
                     </div>
-                )}
+                </div>
 
-                {/* Frase corregida completa */}
-                {aiResult && correctedSentence !== sentenceContext && (
-                    <div style={{ marginBottom: '16px' }}>
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 700 }}>
-                            FRASE CORREGIDA
-                        </div>
-                        <div style={{
-                            background: '#D1FAE5',
-                            padding: '12px 14px',
-                            borderRadius: '8px',
-                            fontSize: '14px',
-                            lineHeight: '1.7',
-                            color: '#065F46',
-                            borderLeft: '3px solid #059669',
-                        }}>
-                            {correctedSentence}
-                        </div>
-                    </div>
-                )}
-
-                {/* Input manual */}
-                <div style={{ marginBottom: '12px' }}>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 700 }}>
-                        CORRECCIÓN MANUAL
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                {/* Input Manual */}
+                <div className="space-y-2 pt-2 border-t border-[#1B3A5C]/5">
+                    <div className="flex gap-2">
                         <input
                             type="text"
                             value={customWord}
                             onChange={(e) => setCustomWord(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleCustomSubmit()}
-                            placeholder="Escribir palabra correcta..."
-                            style={{
-                                flex: 1,
-                                padding: '10px 14px',
-                                background: 'var(--bg-primary)',
-                                border: '1px solid var(--border-default)',
-                                borderRadius: '8px',
-                                fontSize: '14px',
-                                color: 'var(--text-primary)',
-                                outline: 'none',
-                            }}
+                            placeholder="Corrección manual..."
+                            className="flex-1 px-4 py-3 bg-[#1B3A5C]/[0.03] border-none rounded-xl text-xs font-medium text-[#1B3A5C] outline-none focus:ring-2 focus:ring-[#A68246]/20 transition-all"
                         />
                         <button
-                            onClick={handleCustomSubmit}
+                            onClick={() => customWord.trim() && onSelect(customWord.trim())}
                             disabled={!customWord.trim()}
-                            style={{
-                                padding: '10px 20px',
-                                background: customWord.trim() ? 'var(--accent-primary)' : 'var(--bg-secondary)',
-                                color: customWord.trim() ? 'white' : 'var(--text-muted)',
-                                border: 'none',
-                                borderRadius: '8px',
-                                fontSize: '13px',
-                                fontWeight: 700,
-                                cursor: customWord.trim() ? 'pointer' : 'not-allowed',
-                            }}
+                            className="px-6 py-3 bg-[#1B3A5C] text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:brightness-110 disabled:opacity-30 transition-all shadow-lg shadow-[#1B3A5C]/20"
                         >
                             Aplicar
                         </button>
                     </div>
                 </div>
 
-                {/* Botón de aceptar */}
                 <button
                     onClick={onAccept}
-                    style={{
-                        width: '100%',
-                        padding: '12px',
-                        background: 'var(--bg-primary)',
-                        border: '2px solid var(--success)',
-                        borderRadius: '8px',
-                        fontSize: '13px',
-                        color: 'var(--success)',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                    }}
+                    className="w-full py-3.5 bg-white border-2 border-[#16a34a]/30 text-[#16a34a] rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-[#16a34a] hover:text-white hover:border-[#16a34a] transition-all flex items-center justify-center gap-2"
                 >
-                    <span>✓</span>
-                    <span>Aceptar &quot;{originalWord}&quot; como correcta</span>
+                    <Check className="w-4 h-4" /> Validar Palabra Original
                 </button>
             </div>
-
-            {/* Footer con atajos */}
-            <div style={{
-                padding: '10px 16px',
-                background: 'var(--bg-secondary)',
-                borderTop: '1px solid var(--border-subtle)',
-                fontSize: '10px',
-                color: 'var(--text-muted)',
-                display: 'flex',
-                gap: '16px',
-            }}>
-                <span><b>1-5</b> Seleccionar</span>
-                <span><b>Enter</b> Confirmar</span>
-                <span><b>Esc</b> Cerrar</span>
-            </div>
-        </div>
+        </motion.div>
     )
 }
