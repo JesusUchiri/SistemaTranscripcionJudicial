@@ -344,6 +344,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ),
         })),
 
+    triggerRefresh: () => set((state) => ({ segments: [...state.segments] })),
+
     reset: () =>
         set({
             segments: [],

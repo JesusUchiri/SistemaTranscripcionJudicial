@@ -260,9 +260,11 @@ export default function PaginaTranscripcion() {
     const handleHablanteActualizado = useCallback((hablante: HablanteInfo) => {
         setHablantesData(prev => {
             const exists = prev.some(h => h.id === hablante.id)
-            if (exists) return prev.map(h => (h.id === hablante.id ? hablante : h))
-            return [...prev, hablante]
+            const newData = exists ? prev.map(h => (h.id === hablante.id ? hablante : h)) : [...prev, hablante]
+            return newData
         })
+        // Forzar actualización visual en el Store
+        useCanvasStore.getState().triggerRefresh()
     }, [])
 
     const handleSpeakerCambiado = useCallback(async (firstSegmentId: string, newSpeakerId: string) => {

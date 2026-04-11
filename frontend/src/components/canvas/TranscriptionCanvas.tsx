@@ -323,8 +323,21 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
 
     useEffect(() => { if (editor) editor.setEditable(!soloLectura) }, [editor, soloLectura])
 
+    const hablantesKey = useMemo(() => hablantes.map(h => `${h.speaker_id}-${h.nombre}-${h.rol}`).join('|'), [hablantes])
+
     useEffect(() => {
         if (!editor || segments.length === 0) return
+        
+        // Si cambió la metadata de los hablantes, refrescar todo para actualizar etiquetas y colores
+        const speakersMetadataChanged = prevSegmentCountRef.current === segments.length && lastConfirmedSpeakerRef.current !== null
+        
+        if (speakersMetadataChanged) {
+            // Limpiar y forzar reconstrucción completa
+            editor.commands.setContent('')
+            prevSegmentCountRef.current = 0
+            lastConfirmedSpeakerRef.current = null
+        }
+
         if (segments.length === prevSegmentCountRef.current) return
         
         const newSegments = segments.slice(prevSegmentCountRef.current)
@@ -334,7 +347,7 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         newSegments.forEach(seg => {
             if (seg.speaker_id !== lastSpeaker) {
                 const { etiqueta, color } = getSpeakerInfo(seg.speaker_id)
-                editor.chain().focus('end').setSpeaker({
+                editor.chain().setSpeaker({
                     speakerId: seg.speaker_id,
                     label: etiqueta,
                     color,
@@ -344,13 +357,17 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
                 lastConfirmedSpeakerRef.current = lastSpeaker
             }
             const changedIndices = (seg.texto_mejorado && seg.texto_ia) ? computeChangedWordIndices(seg.texto_ia, seg.texto_mejorado) : undefined
-            editor.chain().focus('end').insertContent(renderSegmentWords(seg.texto_mejorado || seg.texto_ia, seg.palabras_json, seg.id, changedIndices)).setSegment({
+            editor.chain().insertContent(renderSegmentWords(seg.texto_mejorado || seg.texto_ia, seg.palabras_json, seg.id, changedIndices)).setSegment({
                 segmentId: seg.id,
                 timestamp: seg.timestamp_inicio,
                 editedByUser: seg.editado_por_usuario
             }).run()
         })
-    }, [editor, segments, getSpeakerInfo])
+        
+        if (soloLectura) {
+            containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'smooth' })
+        }
+    }, [editor, segments, getSpeakerInfo, soloLectura, hablantesKey])
 
     useEffect(() => {
         if (!editor || !provisionalText) {

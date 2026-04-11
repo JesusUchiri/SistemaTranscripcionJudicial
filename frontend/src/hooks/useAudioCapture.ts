@@ -23,10 +23,9 @@ function float32ToInt16Base64(float32: Float32Array): string {
     }
     const bytes = new Uint8Array(int16.buffer)
     let binary = ''
-    // Procesar en bloques para evitar stack overflow en strings largas
-    const chunkSize = 8192
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)))
+    // Procesar en bloques pequeños para total seguridad
+    for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i])
     }
     return btoa(binary)
 }
