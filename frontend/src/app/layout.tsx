@@ -32,7 +32,7 @@ export default function RootLayout({
         <GoogleOAuthProvider clientId={googleClientId}>
           {children}
         </GoogleOAuthProvider>
-       body>
+      </body>
     </html>
   )
 }
