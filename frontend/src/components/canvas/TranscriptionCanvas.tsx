@@ -437,12 +437,18 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
 
             {/* Popovers */}
             <WordCorrectionPopover 
-                {...popover} 
+                isOpen={popover.isOpen}
+                originalWord={popover.word}
+                confidence={popover.confidence}
+                alternatives={popover.alternatives}
+                sentenceContext={popover.sentenceContext}
+                position={popover.screenPos}
                 onClose={() => setPopover(prev => ({ ...prev, isOpen: false }))} 
                 onSelect={(w) => {
                     editor?.chain().focus().setTextSelection(popover.pos).insertContent(w).run()
                     setPopover(prev => ({ ...prev, isOpen: false }))
                 }}
+                onAccept={() => setPopover(prev => ({ ...prev, isOpen: false }))}
             />
 
             {/* Speaker Selector Popover */}
