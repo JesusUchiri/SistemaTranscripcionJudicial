@@ -15,7 +15,7 @@ export interface SpeakerNodeOptions {
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {
         speakerNode: {
-            setSpeaker: (attributes: { speakerId: string; label: string; color: string }) => ReturnType
+            setSpeaker: (attributes: { speakerId: string; label: string; color: string; firstSegmentId?: string | null }) => ReturnType
         }
     }
 }
