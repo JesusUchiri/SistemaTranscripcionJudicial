@@ -180,11 +180,23 @@ async def actualizar_audiencia(
         raise HTTPException(status_code=404, detail="Audiencia no encontrada")
 
     update_data = data.model_dump(exclude_unset=True)
+    estado_anterior = audiencia.estado
     for key, value in update_data.items():
         setattr(audiencia, key, value)
 
     await db.flush()
     await db.refresh(audiencia)
+
+    # Dispara batch processing post-audiencia (Sprint 7/8) cuando se marca como transcrita.
+    # Solo en transición — evita disparar dos veces si el cliente reenvía el PUT.
+    if estado_anterior != "transcrita" and audiencia.estado == "transcrita":
+        try:
+            from app.tasks.batch_process import batch_process_audio
+            batch_process_audio.delay(str(audiencia.id))
+            logger.info(f"batch_process_audio dispatched for audiencia {audiencia.id}")
+        except Exception as e:
+            logger.warning(f"No se pudo encolar batch_process_audio: {e}")
+
     return audiencia
 
 
@@ -252,6 +264,47 @@ async def editar_segmento(
     await db.flush()
     await db.refresh(segmento)
     return segmento
+
+
+@router.post("/{audiencia_id}/segmentos/reasignar-speaker")
+async def reasignar_speaker_segmentos(
+    audiencia_id: uuid.UUID,
+    data: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[Usuario, Depends(get_current_user)],
+):
+    """
+    Reasigna todos los segmentos de un speaker_id a otro.
+    Usado cuando el digitador hace clic en una etiqueta de hablante y elige otro.
+    Body: { "from_speaker_id": "SPEAKER_00", "to_speaker_id": "SPEAKER_01" }
+    Devuelve cuántos segmentos se actualizaron.
+    """
+    from_speaker = data.get("from_speaker_id")
+    to_speaker = data.get("to_speaker_id")
+    if not from_speaker or not to_speaker:
+        raise HTTPException(status_code=400, detail="from_speaker_id y to_speaker_id son requeridos")
+    if from_speaker == to_speaker:
+        return {"actualizados": 0}
+
+    result = await db.execute(select(Audiencia).where(Audiencia.id == audiencia_id))
+    audiencia = result.scalar_one_or_none()
+    if audiencia is None:
+        raise HTTPException(status_code=404, detail="Audiencia no encontrada")
+    if not _puede_acceder_audiencia(audiencia, current_user):
+        raise HTTPException(status_code=404, detail="Audiencia no encontrada")
+
+    res = await db.execute(
+        select(Segmento).where(
+            Segmento.audiencia_id == audiencia_id,
+            Segmento.speaker_id == from_speaker,
+        )
+    )
+    segmentos = res.scalars().all()
+    for seg in segmentos:
+        seg.speaker_id = to_speaker
+        seg.editado_por_usuario = True
+    await db.commit()
+    return {"actualizados": len(segmentos), "from": from_speaker, "to": to_speaker}
 
 
 @router.post("/{audiencia_id}/segmentos/batch-update", response_model=BatchUpdateResponse)

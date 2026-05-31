@@ -1,0 +1,25 @@
+services:
+  backend:
+    ports:
+      - "8000:8000"
+
+  frontend:
+    ports:
+      - "3000:3000"
+    # En local: el cliente JS habla con el backend local, no con producción
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000
+    # Producción local: npm start con bundle pre-compilado
+    # Para volver a dev mode: descomentar las dos líneas siguientes y los volumes
+    # command: sh -c "npm run dev"
+    # volumes:
+    #   - ../frontend/src:/app/src:rw
+    #   - ../frontend/public:/app/public:rw
+    #   - ../frontend/next.config.js:/app/next.config.js:ro
+    #   - ../frontend/tsconfig.json:/app/tsconfig.json:ro
+    #   - ../frontend/tailwind.config.js:/app/tailwind.config.js:ro
+    #   - ../frontend/postcss.config.js:/app/postcss.config.js:ro
+
+  nginx:
+    profiles: ["prod"]

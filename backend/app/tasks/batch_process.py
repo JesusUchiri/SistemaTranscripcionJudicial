@@ -11,6 +11,7 @@ from typing import List, Dict
 from app.config import settings
 from app.database import async_session
 from sqlalchemy import select
+from app.models.audiencia import Audiencia
 from app.models.segmento import Segmento
 from app.services.deepgram_batch import DeepgramBatchService
 
@@ -44,10 +45,21 @@ def batch_process_audio(self, audiencia_id: str):
 
 async def _batch_process_async(audiencia_id: str):
     """Lógica core de procesamiento batch."""
-    # 1. Obtener WAV file
-    audio_path = os.path.join(settings.AUDIO_STORAGE_PATH, f"{audiencia_id}.wav")
+    aid = uuid.UUID(audiencia_id)
+
+    # 1. Obtener audio_path desde la audiencia (lo persiste transcription_ws al iniciar)
+    async with async_session() as db:
+        result = await db.execute(select(Audiencia).where(Audiencia.id == aid))
+        audiencia = result.scalar_one_or_none()
+    if audiencia is None:
+        logger.warning(f"Audiencia {audiencia_id} no encontrada")
+        return {"error": "Audiencia no encontrada"}
+
+    audio_path = audiencia.audio_path or os.path.join(
+        settings.AUDIO_STORAGE_PATH, f"{audiencia_id}.wav"
+    )
     if not os.path.exists(audio_path):
-        logger.warning(f"No se encontró archivo WAV para audiencia {audiencia_id}")
+        logger.warning(f"No se encontró archivo WAV en {audio_path}")
         return {"error": "Archivo no encontrado"}
 
     with open(audio_path, 'rb') as f:
@@ -68,8 +80,6 @@ async def _batch_process_async(audiencia_id: str):
     logger.info("Buscando segmentos streaming para alinear temporalmente...")
 
     async with async_session() as db:
-        aid = uuid.UUID(audiencia_id)
-        
         # Registrar costo si hubo palabras (indicando procesamiento exitoso)
         if result.get("duration", 0.0) > 0:
             try:

@@ -24,6 +24,7 @@ from app.models.audiencia import Audiencia
 from app.models.segmento import Segmento
 from app.models.usuario import Usuario
 from app.services.auth_service import decode_token, get_user_by_id
+from app.data.legal_keyterms import get_keyterms
 from app.services.deepgram_streaming import DeepgramStreamingService
 from app.services.real_time_enhancement import get_enhancement_service
 from app.services.text_processing import detect_question, clean_transcript, preprocess_raw_transcript
@@ -104,6 +105,19 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
     os.makedirs(audio_dir, exist_ok=True)
     session_short_id = str(uuid.uuid4())[:8]
     audio_path = os.path.join(audio_dir, f"{audiencia_id}_{session_short_id}.wav")
+
+    # Persistir el audio_path en la audiencia para que batch_process_audio
+    # (Sprint 7) pueda encontrar el archivo después de cerrar la sesión.
+    try:
+        async with async_session() as db_path:
+            await db_path.execute(
+                Audiencia.__table__.update()
+                .where(Audiencia.id == aid)
+                .values(audio_path=audio_path)
+            )
+            await db_path.commit()
+    except Exception as e:
+        logger.warning(f"No se pudo persistir audio_path: {e}")
 
     # WAV: 1 canal, 16 bits, 16000 Hz (coincide con lo que envía el frontend)
     audio_file = wave.open(audio_path, "wb")
@@ -537,11 +551,12 @@ async def transcription_websocket(websocket: WebSocket, audiencia_id: str):
         except Exception:
             pass
 
-    # Create Deepgram service
+    # Create Deepgram service (Nova-3 keyterms boosts legal term recognition)
     dg_service = DeepgramStreamingService(
         on_transcript=on_transcript,
         on_utterance_end=on_utterance_end,
         on_speech_started=on_speech_started,
+        keyterms=get_keyterms(),
     )
 
     try:

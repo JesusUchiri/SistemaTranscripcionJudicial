@@ -31,6 +31,7 @@ class DeepgramStreamingService:
         self.on_transcript = on_transcript
         self.on_utterance_end = on_utterance_end
         self.on_speech_started = on_speech_started
+        self._keyterms = keyterms or []
 
         self._client: AsyncDeepgramClient = AsyncDeepgramClient(api_key=settings.DEEPGRAM_API_KEY)
         self._connection_ctx: Any = None
@@ -49,7 +50,7 @@ class DeepgramStreamingService:
     async def connect(self) -> None:
         """Establish async connection to Deepgram using the Python SDK."""
         try:
-            self._connection_ctx = self._client.listen.v1.connect(
+            connect_kwargs: Dict[str, Any] = dict(
                 model=settings.DEEPGRAM_MODEL,
                 language="es-419",
                 encoding="linear16",
@@ -64,6 +65,11 @@ class DeepgramStreamingService:
                 vad_events="true",
                 numerals="true",
             )
+            if self._keyterms:
+                connect_kwargs["keyterm"] = self._keyterms
+                logger.info(f"Deepgram streaming with {len(self._keyterms)} keyterms")
+
+            self._connection_ctx = self._client.listen.v1.connect(**connect_kwargs)
             self._connection = await self._connection_ctx.__aenter__()
             self._running = True
 

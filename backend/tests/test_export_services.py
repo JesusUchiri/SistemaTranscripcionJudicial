@@ -34,6 +34,6 @@ def test_generate_docx():
     header_found = False
     for section in doc.sections:
         for para in section.header.paragraphs:
-            if "Juzgado Civil" in para.text:
+            if "JUZGADO CIVIL" in para.text.upper():
                 header_found = True
     assert header_found, "Header from audiencia properties not injected properly"

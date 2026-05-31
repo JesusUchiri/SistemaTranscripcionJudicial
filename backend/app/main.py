@@ -85,6 +85,7 @@ async def auto_seed_database():
                         activo=True,
                     )
                     db.add(digitador)
+                    await db.flush()
                     logger.info("   ✅ Usuario digitador creado")
 
                     # Crear frases estándar
@@ -114,7 +115,8 @@ async def auto_seed_database():
                     logger.info(f"✅ Base de datos ya poblada ({total_usuarios} usuarios)")
 
                 # Validar la existencia de la audiencia Demo (en caso que no este)
-                resultado_demo = await db.execute(select(Audiencia).where(Audiencia.id == "00000000-0000-0000-0000-000000000000"))
+                demo_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
+                resultado_demo = await db.execute(select(Audiencia).where(Audiencia.id == demo_id))
                 demo_existe = resultado_demo.scalar_one_or_none()
                 if not demo_existe:
                     # fetch transcriptor to assign to, so the digitador can access the WS
