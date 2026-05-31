@@ -6,7 +6,7 @@ cmds = ["useradd -m -s /bin/bash node || true"]
 cmds = ["npm install --legacy-peer-deps"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["npm run build", "chown -R node:node /app || true"]
 
 [start]
 cmd = "su -p node -c \"PATH=$PATH npm run start\""
