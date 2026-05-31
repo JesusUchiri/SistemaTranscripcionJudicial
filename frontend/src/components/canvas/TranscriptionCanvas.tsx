@@ -248,7 +248,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
         const info = speakerMap.get(speakerId)
         const label = info ? (info.nombre ? `${info.etiqueta} ${info.nombre}` : info.etiqueta) : `${speakerId.toUpperCase()}:`
         const color = info ? info.color : '#1B3A5C'
-        return { etiqueta: label, color }
+        const rol = info?.rol || null
+        return { etiqueta: label, color, rol }
     }, [speakerMap])
 
     const debouncedSave = useMemo(() => debounce((segId: string, text: string) => onSegmentoEditado?.(segId, text), 800), [onSegmentoEditado])
@@ -260,6 +261,8 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
             SpeakerNode, SegmentMark, LowConfidenceMark, BookmarkNode, ProvisionalNode
         ],
         editable: !soloLectura,
+        // TipTap v3 + Next.js: evitar hydration mismatches con SSR
+        immediatelyRender: false,
         content: '',
         editorProps: {
             attributes: { class: 'focus:outline-none min-h-[600px] w-full' },
@@ -323,51 +326,90 @@ const TranscriptionCanvas = forwardRef<TranscriptionCanvasHandle, CanvasProps>((
 
     useEffect(() => { if (editor) editor.setEditable(!soloLectura) }, [editor, soloLectura])
 
-    const hablantesKey = useMemo(() => hablantes.map(h => `${h.speaker_id}-${h.nombre}-${h.rol}`).join('|'), [hablantes])
+    // hablantesKey: string estable que solo cambia cuando metadatos de hablantes cambian de verdad
+    const hablantesKey = useMemo(
+        () => hablantes.map(h => `${h.speaker_id}-${h.nombre}-${h.rol}-${h.color}`).join('|'),
+        [hablantes]
+    )
+
+    // Guardar getSpeakerInfo y soloLectura en refs para que NO formen parte de las deps
+    // del useEffect de sincronización (evita loops por cambios de referencia que vienen
+    // del padre vía Zustand: segments-update → hablantes-update → re-render → nueva ref).
+    const getSpeakerInfoRef = useRef(getSpeakerInfo)
+    useEffect(() => { getSpeakerInfoRef.current = getSpeakerInfo }, [getSpeakerInfo])
+    const soloLecturaRef = useRef(soloLectura)
+    useEffect(() => { soloLecturaRef.current = soloLectura }, [soloLectura])
+
+    // Recuerda el hablantesKey del último render para detectar cambios reales (no inferidos).
+    const prevHablantesKeyRef = useRef<string>('')
 
     useEffect(() => {
         if (!editor || segments.length === 0) return
-        
-        // Si cambió la metadata de los hablantes, refrescar todo para actualizar etiquetas y colores
-        const speakersMetadataChanged = prevSegmentCountRef.current === segments.length && lastConfirmedSpeakerRef.current !== null
-        
-        if (speakersMetadataChanged) {
-            // Limpiar y forzar reconstrucción completa
+
+        // Cambio REAL de metadata: hablantesKey distinto al anterior Y los segments siguen iguales
+        // → repintar todo. La heurística vieja (basada solo en refs) daba true en cada re-render
+        // del polling y disparaba un loop con setContent + N×insertContent.
+        const hablantesCambiaron =
+            prevHablantesKeyRef.current !== '' &&
+            prevHablantesKeyRef.current !== hablantesKey &&
+            prevSegmentCountRef.current === segments.length
+
+        if (hablantesCambiaron) {
             editor.commands.setContent('')
             prevSegmentCountRef.current = 0
             lastConfirmedSpeakerRef.current = null
         }
+        prevHablantesKeyRef.current = hablantesKey
 
         if (segments.length === prevSegmentCountRef.current) return
-        
+
         const newSegments = segments.slice(prevSegmentCountRef.current)
         prevSegmentCountRef.current = segments.length
 
+        // ⚠️ CRÍTICO: una sola transacción TipTap.
+        // Antes había 2×N chain().run() (uno para setSpeaker, otro para insertContent+setSegment).
+        // Con N=500+ eso ejecutaba ~1000 dispatchTransaction consecutivas → cada una llamaba
+        // forceStoreRerender (useSyncExternalStore) → React detectaba "Maximum update depth".
+        // Acumulando todo en UN chain y llamando run() al final, todo entra en 1 transacción.
+        const chain = editor.chain()
+        const speakerInfo = getSpeakerInfoRef.current
         let lastSpeaker = lastConfirmedSpeakerRef.current
+
         newSegments.forEach(seg => {
             if (seg.speaker_id !== lastSpeaker) {
-                const { etiqueta, color } = getSpeakerInfo(seg.speaker_id)
-                editor.chain().setSpeaker({
+                const { etiqueta, color, rol } = speakerInfo(seg.speaker_id)
+                chain.setSpeaker({
                     speakerId: seg.speaker_id,
                     label: etiqueta,
                     color,
-                    firstSegmentId: seg.id
-                }).run()
+                    rol,
+                    firstSegmentId: seg.id,
+                })
                 lastSpeaker = seg.speaker_id
-                lastConfirmedSpeakerRef.current = lastSpeaker
             }
-            const changedIndices = (seg.texto_mejorado && seg.texto_ia) ? computeChangedWordIndices(seg.texto_ia, seg.texto_mejorado) : undefined
-            editor.chain().insertContent(renderSegmentWords(seg.texto_mejorado || seg.texto_ia, seg.palabras_json, seg.id, changedIndices)).setSegment({
-                segmentId: seg.id,
-                timestamp: seg.timestamp_inicio,
-                editedByUser: seg.editado_por_usuario
-            }).run()
+            const changedIndices = (seg.texto_mejorado && seg.texto_ia)
+                ? computeChangedWordIndices(seg.texto_ia, seg.texto_mejorado)
+                : undefined
+            chain
+                .insertContent(
+                    renderSegmentWords(seg.texto_mejorado || seg.texto_ia, seg.palabras_json, seg.id, changedIndices)
+                )
+                .setSegment({
+                    segmentId: seg.id,
+                    timestamp: seg.timestamp_inicio,
+                    editedByUser: seg.editado_por_usuario,
+                })
         })
-        
-        if (soloLectura) {
+        lastConfirmedSpeakerRef.current = lastSpeaker
+        chain.run()  // ← UNA sola dispatchTransaction, UN solo rerender
+
+        if (soloLecturaRef.current) {
             containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'smooth' })
         }
-    }, [editor, segments, getSpeakerInfo, soloLectura, hablantesKey])
+        // Solo dispara cuando cambian datos REALES (segments o metadata de hablantes);
+        // NO depende de funciones cuyo identity puede cambiar entre renders.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [editor, segments, hablantesKey])
 
     useEffect(() => {
         if (!editor || !provisionalText) {

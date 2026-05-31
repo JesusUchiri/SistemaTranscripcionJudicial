@@ -14,9 +14,11 @@ import TranscriptionCanvas, { type TranscriptionCanvasHandle } from '@/component
 import PanelHablantes from '@/components/speakers/PanelHablantes'
 import ReproductorAudio, { type ReproductorAudioHandle } from '@/components/audio/ReproductorAudio'
 import BarraEstado from '@/components/status/BarraEstado'
+import { TranscriptionProgressBanner } from '@/components/status/TranscriptionProgressBanner'
 import PanelMarcadores from '@/components/markers/PanelMarcadores'
 import AtajosFrases from '@/components/shortcuts/AtajosFrases'
 import RevisionBatchPanel from '@/components/canvas/RevisionBatchPanel'
+import SugerenciasDiccionarioFlotante from '@/components/canvas/SugerenciasDiccionarioFlotante'
 import PanelVariables, { type VariableDeteccion } from '@/components/variables/PanelVariables'
 import api from '@/lib/api'
 import { apiBaseUrl } from '@/lib/urls'
@@ -98,7 +100,12 @@ export default function PaginaTranscripcion() {
         removeVarDeteccion,
     } = useCanvasStore()
 
-    const { isConnected, connect, sendAudio, stop, disconnect } = useDeepgramSocket(audienciaId)
+    const { isConnected, connect, sendAudio, stop, disconnect, suggestions, setSuggestions } = useDeepgramSocket(audienciaId)
+
+    const descartarSugerencia = useCallback((idx: number) => {
+        setSuggestions(prev => prev.filter((_, i) => i !== idx))
+    }, [setSuggestions])
+    const descartarTodasSugerencias = useCallback(() => setSuggestions([]), [setSuggestions])
 
     const cargarHablantes = useCallback(async () => {
         try {
@@ -163,17 +170,109 @@ export default function PaginaTranscripcion() {
     const temporizadorRef = useRef<NodeJS.Timeout | null>(null)
     const prevTranscribingRef = useRef(false)
 
+    const pollingRef = useRef<NodeJS.Timeout | null>(null)
+    const pollingStartedRef = useRef<number | null>(null)
+    const tickRef = useRef<NodeJS.Timeout | null>(null)
+    const [pollingActive, setPollingActive] = useState(false)
+    const [pollingElapsed, setPollingElapsed] = useState(0)
+    const [reintentando, setReintentando] = useState(false)
+    const [reintentoError, setReintentoError] = useState<string | null>(null)
+
+    // Helpers estables: NO dependen de state/closures que cambien (evita loops)
+    const startProgressTick = useCallback(() => {
+        pollingStartedRef.current = Date.now()
+        setPollingElapsed(0)
+        setPollingActive(true)
+        if (tickRef.current) clearInterval(tickRef.current)
+        tickRef.current = setInterval(() => {
+            if (pollingStartedRef.current !== null) {
+                setPollingElapsed(Math.floor((Date.now() - pollingStartedRef.current) / 1000))
+            }
+        }, 1000)
+    }, [])
+
+    const stopProgressTick = useCallback(() => {
+        pollingStartedRef.current = null
+        if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null }
+        setPollingActive(false)
+    }, [])
+
+    // Cleanup global del tick al desmontar (cleanup del useEffect de cargar también lo hace)
+    useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current) }, [])
+
+    const audienciaIdForRetry = audiencia?.id
+    const reintentarTranscripcion = useCallback(async () => {
+        if (!audienciaIdForRetry) return
+        setReintentando(true)
+        setReintentoError(null)
+        try {
+            await api.post('/api/transcripcion-audio/procesar', {
+                audiencia_id: audienciaIdForRetry,
+                regions: [],
+                filters: { normalize: true, removeSilence: false, volume: 1.0 },
+            })
+            startProgressTick()
+        } catch (err: any) {
+            setReintentoError(err?.response?.data?.detail || 'No se pudo reintentar.')
+        } finally {
+            setReintentando(false)
+        }
+    }, [audienciaIdForRetry, startProgressTick])
+
     useEffect(() => {
+        let cancelado = false
+
         const cargar = async () => {
             try {
                 const [resAud, resSegs] = await Promise.all([
                     api.get<Audiencia>(`/api/audiencias/${audienciaId}`),
                     api.get<Segmento[]>(`/api/audiencias/${audienciaId}/segmentos`)
                 ])
+                if (cancelado) return
                 setAudiencia(resAud.data)
                 useCanvasStore.getState().setSegments(resSegs.data)
                 await cargarHablantes()
-                if (resAud.data.estado === 'transcrita' || resAud.data.estado === 'finalizada') setMostrarSelector(false)
+                if (resAud.data.estado === 'transcrita' || resAud.data.estado === 'finalizada') {
+                    setMostrarSelector(false)
+                }
+
+                // Polling SOLO si Deepgram batch está procesando AHORA MISMO (estado='en_curso').
+                // No usamos audio_path como señal porque transcription_ws también lo persiste al
+                // iniciar una grabación EN VIVO (para que batch_process pueda encontrar el WAV
+                // después). El único estado inequívoco de "audio subido procesándose" es 'en_curso'.
+                // 'pendiente' = audiencia esperando acción del usuario (grabar o reintentar).
+                if (resAud.data.estado === 'en_curso') {
+                    if (pollingRef.current) clearInterval(pollingRef.current)
+                    startProgressTick()
+                    pollingRef.current = setInterval(async () => {
+                        try {
+                            const { data: audPoll } = await api.get<Audiencia>(`/api/audiencias/${audienciaId}`)
+                            if (cancelado) return
+                            setAudiencia(audPoll)
+                            if (audPoll.estado === 'transcrita' || audPoll.estado === 'finalizada') {
+                                if (pollingRef.current) {
+                                    clearInterval(pollingRef.current)
+                                    pollingRef.current = null
+                                }
+                                stopProgressTick()
+                                const { data: segs } = await api.get<Segmento[]>(`/api/audiencias/${audienciaId}/segmentos`)
+                                if (cancelado) return
+                                useCanvasStore.getState().setSegments(segs)
+                                setMostrarSelector(false)
+                                await cargarHablantes()
+                            } else if (audPoll.estado === 'pendiente' && resAud.data.estado === 'en_curso') {
+                                // La task volvió a pendiente => hubo error. Detener poll.
+                                if (pollingRef.current) {
+                                    clearInterval(pollingRef.current)
+                                    pollingRef.current = null
+                                }
+                                setCargaError('La transcripción falló. Reintenta desde la audiencia.')
+                            }
+                        } catch (e) {
+                            // Errores transitorios de red — no abortamos el polling
+                        }
+                    }, 4000)
+                }
             } catch (err: any) {
                 const s = err?.response?.status
                 if (s === 401 || s === 403) router.replace('/login')
@@ -181,8 +280,17 @@ export default function PaginaTranscripcion() {
             }
         }
         cargar()
-        return () => { reset(); if (temporizadorRef.current) clearInterval(temporizadorRef.current) }
-    }, [audienciaId, router, reset, cargarHablantes])
+        return () => {
+            cancelado = true
+            useCanvasStore.getState().reset()
+            if (temporizadorRef.current) clearInterval(temporizadorRef.current)
+            if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
+            stopProgressTick()
+        }
+        // Intencionalmente NO incluimos reset/cargarHablantes/startProgressTick/stopProgressTick:
+        // son funciones estables; añadirlas dispara re-ejecuciones si Zustand devuelve nueva ref.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [audienciaId, router])
 
     // ... Batch logic (mantener igual)
     const handleAceptarBatch = useCallback(async (id: string, accion: 'aceptar' | 'rechazar') => {
@@ -199,6 +307,32 @@ export default function PaginaTranscripcion() {
             const { data } = await api.get<Segmento[]>(`/api/audiencias/${audienciaId}/segmentos`)
             useCanvasStore.getState().setSegments(data)
         } catch (error) { console.error(error) }
+    }, [audienciaId])
+
+    // Variables: aceptar detección → PUT al campo correspondiente en la audiencia + remover detección
+    const handleAceptarVarDeteccion = useCallback(async (det: VariableDeteccion) => {
+        try {
+            const { VARIABLES_DEF } = await import('@/lib/variables')
+            const v = VARIABLES_DEF.find(x => x.key === det.key)
+            if (!v || !v.field) {
+                removeVarDeteccion(det.key)
+                return
+            }
+            const { data } = await api.put<Audiencia>(`/api/audiencias/${audienciaId}`, { [v.field]: det.valorDetectado })
+            setAudiencia(data)
+            removeVarDeteccion(det.key)
+        } catch (err) {
+            console.error('Error aceptando detección de variable:', err)
+        }
+    }, [audienciaId, removeVarDeteccion])
+
+    const handleAudienciaActualizada = useCallback(async (campos: Partial<Audiencia>) => {
+        try {
+            const { data } = await api.put<Audiencia>(`/api/audiencias/${audienciaId}`, campos)
+            setAudiencia(data)
+        } catch (err) {
+            console.error('Error actualizando audiencia:', err)
+        }
     }, [audienciaId])
 
     useEffect(() => {
@@ -227,6 +361,27 @@ export default function PaginaTranscripcion() {
     const handleAudioTimeUpdate = useCallback((s: number) => setCurrentAudioTime(s), [setCurrentAudioTime])
     const handleSegmentoEditado = useCallback(async (id: string, texto: string) => {
         try { await api.put(`/api/audiencias/${audienciaId}/segmentos/${id}`, { texto_editado: texto }) } catch (e) {}
+    }, [audienciaId])
+
+    // Click en etiqueta de hablante en el canvas → reasignar TODOS los segmentos del speaker viejo al nuevo.
+    // `firstSegmentId` no se usa: el popover ya identifica qué speaker está siendo cambiado a través del estado del canvas.
+    // Aquí el contrato simplificado: el canvas envía (firstSegmentId, newSpeakerId) y nosotros buscamos el speaker_id
+    // del segmento original para hacer la reasignación masiva.
+    const handleSpeakerCambiado = useCallback(async (firstSegmentId: string, newSpeakerId: string) => {
+        const store = useCanvasStore.getState()
+        const seg = store.segments.find(s => s.id === firstSegmentId)
+        if (!seg || seg.speaker_id === newSpeakerId) return
+        try {
+            await api.post(`/api/audiencias/${audienciaId}/segmentos/reasignar-speaker`, {
+                from_speaker_id: seg.speaker_id,
+                to_speaker_id: newSpeakerId,
+            })
+            // Refresca segmentos para que el canvas se repinte con el nuevo speaker
+            const { data } = await api.get<Segmento[]>(`/api/audiencias/${audienciaId}/segmentos`)
+            useCanvasStore.getState().setSegments(data)
+        } catch (err) {
+            console.error('Error reasignando speaker:', err)
+        }
     }, [audienciaId])
 
     if (!audiencia) return (
@@ -311,9 +466,18 @@ export default function PaginaTranscripcion() {
                     </AnimatePresence>
 
                     <div className="flex-1 relative flex flex-col min-h-0 bg-[#F7F5F2]/30">
+                        {audiencia && audiencia.estado === 'en_curso' && segments.length === 0 && (
+                            <TranscriptionProgressBanner
+                                audiencia={audiencia}
+                                pollingElapsed={pollingElapsed}
+                                onReintentar={reintentarTranscripcion}
+                                reintentando={reintentando}
+                                reintentoError={reintentoError}
+                            />
+                        )}
                         <RevisionBatchPanel segmentos={segments} onAceptar={handleAceptarBatch} onAplicarBatch={handleAplicarMultiplesBatch} />
                         <div className="flex-1 overflow-hidden relative">
-                            <TranscriptionCanvas ref={canvasRef} soloLectura={isTranscribing} hablantes={hablantesData} onSegmentoEditado={handleSegmentoEditado} onSeekAudio={handleSeekAudio} />
+                            <TranscriptionCanvas ref={canvasRef} soloLectura={isTranscribing} hablantes={hablantesData} onSegmentoEditado={handleSegmentoEditado} onSeekAudio={handleSeekAudio} onSpeakerCambiado={handleSpeakerCambiado} />
                         </div>
                         <BarraEstado />
                     </div>
@@ -349,10 +513,25 @@ export default function PaginaTranscripcion() {
                             )}
                             {pestanaSidebar === 'marcadores' && <PanelMarcadores audienciaId={audienciaId} onSeekAudio={handleSeekAudio} />}
                             {pestanaSidebar === 'frases' && <AtajosFrases onInsertarFrase={(t) => canvasRef.current?.insertContent(t)} habilitado={true} />}
+                            {pestanaSidebar === 'variables' && audiencia && (
+                                <PanelVariables
+                                    audiencia={audiencia}
+                                    hablantes={hablantesData.map(h => ({ rol: h.rol, nombre: h.nombre, etiqueta: h.etiqueta }))}
+                                    detecciones={varDetecciones}
+                                    onAceptarDeteccion={handleAceptarVarDeteccion}
+                                    onRechazarDeteccion={removeVarDeteccion}
+                                    onAudienciaActualizada={handleAudienciaActualizada}
+                                />
+                            )}
                         </div>
                     </div>
                 </aside>
             </div>
+            <SugerenciasDiccionarioFlotante
+                sugerencias={suggestions}
+                onDescartar={descartarSugerencia}
+                onDescartarTodas={descartarTodasSugerencias}
+            />
         </div>
       </AuthGuard>
     )

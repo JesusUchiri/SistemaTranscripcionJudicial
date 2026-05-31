@@ -39,10 +39,12 @@ export default function AudioEditorPre({ file, onProcess, onCancel }: AudioEdito
     const containerRef = useRef<HTMLDivElement>(null)
     const wavesurferRef = useRef<any>(null)
     const regionsRef = useRef<any>(null)
+    const blobUrlForFileRef = useRef<string | null>(null)
     
     const [playing, setPlaying] = useState(false)
     const [duration, setDuration] = useState(0)
     const [cargado, setCargado] = useState(false)
+    const [cargaFallo, setCargaFallo] = useState(false)
     const [activeId, setActiveId] = useState<string | null>(null)
     const [isProcessing, setIsProcessing] = useState(false)
     const [mode, setMode] = useState<'trim' | 'mute'>('trim')
@@ -96,20 +98,57 @@ export default function AudioEditorPre({ file, onProcess, onCancel }: AudioEdito
             ws.on('play', () => setPlaying(true))
             ws.on('pause', () => setPlaying(false))
 
+            // Captura EncodingError (formato inválido) y AbortError (cleanup).
+            // Si la previsualización falla, marcamos cargaFallo para que el usuario
+            // pueda procesar igualmente — Deepgram acepta el archivo aunque el
+            // navegador no pueda decodificarlo (codec exótico, MP3 VBR raro, etc.)
+            ws.on('error', (e: any) => {
+                const msg = e?.message || String(e)
+                if (msg.includes('aborted')) return
+                setCargado(false)
+                setCargaFallo(true)
+                console.warn('[AudioEditorPre] error decodificando audio:', msg)
+            })
+
             const url = URL.createObjectURL(file)
-            ws.load(url)
+            blobUrlForFileRef.current = url
+            // ws.load() retorna Promise; sin catch, el EncodingError termina
+            // como Uncaught (in promise) en la consola del navegador.
+            try {
+                const loadResult: any = ws.load(url)
+                if (loadResult && typeof loadResult.then === 'function') {
+                    loadResult.catch((err: any) => {
+                        const msg = err?.message || String(err)
+                        if (msg.includes('aborted')) return
+                        setCargado(false)
+                        setCargaFallo(true)
+                        console.warn('[AudioEditorPre] load rechazado:', msg)
+                    })
+                }
+            } catch (err: any) {
+                setCargado(false)
+                setCargaFallo(true)
+                console.warn('[AudioEditorPre] load sincrónico falló:', err?.message || err)
+            }
             wavesurferRef.current = ws
         }
 
         init()
-        return () => ws?.destroy()
+        return () => {
+            try { ws?.destroy() } catch { /* puede lanzar si carga estaba en vuelo */ }
+            if (blobUrlForFileRef.current) {
+                URL.revokeObjectURL(blobUrlForFileRef.current)
+                blobUrlForFileRef.current = null
+            }
+        }
     }, [file])
 
     const handleProcess = async () => {
         setIsProcessing(true)
-        
-        // Obtener regiones actuales del plugin
-        const regions = regionsRef.current?.getRegions() || []
+
+        // Si la previsualización falló, no hay regiones (plugin no se inicializó);
+        // se procesa el archivo completo en el backend.
+        const regions = cargaFallo ? [] : (regionsRef.current?.getRegions() || [])
         const regionsData = regions.map((r: any) => ({ start: r.start, end: r.end }))
 
         setTimeout(() => {
@@ -146,15 +185,44 @@ export default function AudioEditorPre({ file, onProcess, onCancel }: AudioEdito
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
-                    {/* Visualizer */}
-                    <div className="relative bg-[#F7F5F2] rounded-[24px] p-6 mb-8 border border-[#1B3A5C]/5">
+                    {/* Visualizer (wavesurfer) — oculto cuando cargaFallo */}
+                    <div className={`relative bg-[#F7F5F2] rounded-[24px] p-6 mb-8 border border-[#1B3A5C]/5 ${cargaFallo ? 'hidden' : ''}`}>
                         <div ref={containerRef} />
-                        {!cargado && (
+                        {!cargado && !cargaFallo && (
                             <div className="absolute inset-0 flex items-center justify-center bg-[#F7F5F2]/80 backdrop-blur-sm rounded-[24px]">
                                 <Loader2 className="w-8 h-8 animate-spin text-[#A68246]" />
                             </div>
                         )}
                     </div>
+
+                    {/* Fallback HTML5 — cuando wavesurfer no decodifica este formato.
+                        El elemento <audio> nativo usa FFmpeg internamente y es mucho
+                        más tolerante con MP3 VBR / codecs raros. */}
+                    {cargaFallo && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-[24px] p-6 mb-8">
+                            <p className="text-sm font-bold text-amber-900 mb-2">⚠ Previsualización en modo simple</p>
+                            <p className="text-xs text-amber-700/90 mb-4">
+                                El navegador no pudo generar la forma de onda para este audio (codec / encoding atípico).
+                                Puedes <strong>escucharlo</strong> con el reproductor de abajo y luego pulsar <strong>Procesar sin previsualizar</strong>
+                                para transcribirlo (Deepgram sí lo decodifica).
+                            </p>
+                            <audio
+                                controls
+                                preload="metadata"
+                                src={blobUrlForFileRef.current || (typeof window !== 'undefined' ? URL.createObjectURL(file) : undefined)}
+                                className="w-full"
+                                onLoadedMetadata={(e) => {
+                                    const el = e.currentTarget
+                                    if (el.duration && !isNaN(el.duration)) setDuration(el.duration)
+                                }}
+                            >
+                                Tu navegador no soporta el elemento de audio.
+                            </audio>
+                            <p className="text-[10px] text-amber-700/60 mt-3 font-bold uppercase tracking-widest">
+                                Archivo: {file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB
+                            </p>
+                        </div>
+                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                         {/* Controles de Reproducción */}
@@ -242,11 +310,11 @@ export default function AudioEditorPre({ file, onProcess, onCancel }: AudioEdito
                     </button>
                     <button
                         onClick={handleProcess}
-                        disabled={isProcessing || !cargado}
+                        disabled={isProcessing || (!cargado && !cargaFallo)}
                         className="px-8 py-4 bg-[#1B3A5C] text-white rounded-2xl font-bold text-xs uppercase tracking-[0.2em] hover:brightness-110 shadow-xl shadow-[#1B3A5C]/20 disabled:opacity-30 transition-all flex items-center gap-3"
                     >
                         {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                        Procesar y Transcribir
+                        {cargaFallo ? 'Procesar sin previsualizar' : 'Procesar y Transcribir'}
                     </button>
                 </div>
             </div>

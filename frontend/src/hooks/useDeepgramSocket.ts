@@ -173,11 +173,33 @@ export function useDeepgramSocket(audienciaId: string) {
             setIsConnected(false)
             useCanvasStore.getState().setConnectionStatus('disconnected')
 
-            // Auto-reconnect
+            // Códigos custom del backend (transcription_ws.py):
+            //   4401 — Token requerido / inválido / expirado
+            //   4403 — Sin permiso para esta audiencia
+            //   4404 — Audiencia no encontrada
+            //   4409 — Audiencia ya tiene sesión activa
+            // No reintentamos en ninguno de estos: el problema no se resuelve solo.
+            const code = event.code
+            const fatal = code === 4401 || code === 4403 || code === 4404 || code === 4409
+            if (fatal) {
+                const mensajes: Record<number, string> = {
+                    4401: 'Tu sesión expiró o el token es inválido. Inicia sesión nuevamente.',
+                    4403: 'No tienes permiso para transcribir esta audiencia.',
+                    4404: 'La audiencia no existe o fue eliminada.',
+                    4409: 'Otra sesión ya está transcribiendo esta audiencia.',
+                }
+                setError(mensajes[code] || event.reason || 'Conexión rechazada por el servidor')
+                reconnectAttemptsRef.current = maxReconnectAttempts  // bloquea futuros reintentos
+                return
+            }
+
+            // Auto-reconnect solo para cierres "transitorios" (red, timeout, etc.)
             if (reconnectAttemptsRef.current < maxReconnectAttempts) {
                 reconnectAttemptsRef.current++
                 useCanvasStore.getState().setConnectionStatus('reconnecting')
                 setTimeout(connect, reconnectIntervalMs)
+            } else {
+                setError('No se pudo reconectar. Verifica tu conexión a internet.')
             }
         }
 
