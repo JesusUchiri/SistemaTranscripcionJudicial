@@ -1,2 +1,0 @@
-description = "Ejecuta las migraciones de Alembic"
-prompt = "!{cd Judiscribe/backend && docker compose exec backend alembic upgrade head}"
